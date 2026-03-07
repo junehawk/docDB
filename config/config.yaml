@@ -1,0 +1,72 @@
+# docDB Configuration
+# ================================
+
+document_processing:
+  doc_root: '~/Documents'    # 사용자 문서 루트 (이것만 수정하면 됨)
+  chunk_size: 800
+  chunk_overlap: 100
+  max_file_size_mb: 100
+
+  supported_extensions:
+    - hwp
+    - hwpx
+    - pdf
+    - docx
+    - pptx
+    - xlsx
+    - xls
+    - csv
+    - txt
+    - html
+    - rtf
+    - pages
+    - numbers
+    - key
+
+embedding:
+  model: 'BAAI/bge-m3'
+  device: 'auto'           # auto | mps | cuda | cpu
+  batch_size: 32
+
+vectorstore:
+  chroma_path: 'data/chroma_db'       # 프로젝트 폴더 기준 상대경로
+
+indexing:
+  tracker_db: 'data/index_tracker.db'  # 프로젝트 폴더 기준 상대경로
+
+search:
+  mode: 'hybrid'
+  vector_top_n: 50
+  bm25_top_n: 50
+  rrf_k: 60
+  rerank_top_n: 20
+  final_top_n: 10
+
+reranker:
+  enable: true
+  model: 'BAAI/bge-reranker-v2-m3'
+  device: 'auto'
+  batch_size: 16
+
+excluded_patterns:
+  - '\.DS_Store'
+  - '__pycache__'
+  - '\.git'
+  - '~\$'
+
+# OCR 설정 (스캔 이미지 PDF용)
+ocr:
+  enabled: true
+  primary_engine: 'auto'       # 'auto', 'vision', 'tesseract'
+  fallback_engine: 'tesseract'
+  languages: ['eng', 'kor']
+  dpi: 300
+  max_pages_per_pdf: 50
+  timeout_per_page: 10
+
+contextual:
+  enable: true
+
+logging:
+  level: 'INFO'
+  log_dir: 'data/logs'                 # 프로젝트 폴더 기준 상대경로

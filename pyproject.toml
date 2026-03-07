@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docdb"
+version = "0.1.0"
+description = "로컬 문서 벡터 검색 시스템 - MCP 서버를 통해 Claude에서 자연어 검색"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "KISTI Data Platform Research Group"}
+]
+
+dependencies = [
+    "pdfplumber>=0.10.0",
+    "PyPDF2>=3.0.0",
+    "python-docx>=0.8.11",
+    "python-pptx>=0.6.21",
+    "openpyxl>=3.1.0",
+    "xlrd>=2.0.1",
+    "beautifulsoup4>=4.12.0",
+    "chardet>=5.2.0",
+    "lxml>=4.9.0",
+    "sentence-transformers>=2.7.0",
+    "torch>=2.0.0",
+    "transformers>=4.30.0",
+    "tokenizers>=0.14.0",
+    "chromadb>=0.4.0",
+    "mcp[cli]>=1.0.0",
+    "PyYAML>=6.0",
+    "pydantic>=2.0.0",
+    # "python-dotenv>=1.0.0",  # 현재 미사용
+    "loguru>=0.7.0",
+    "tqdm>=4.66.0",
+    "numpy>=1.24.0",
+    "olefile>=0.47",
+    "rank_bm25>=0.2.2",
+]
+
+[project.optional-dependencies]
+ocr = [
+    "pdf2image>=1.16.0",
+    "pytesseract>=0.3.10",
+    "pyobjc-framework-Vision>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
+]
+
+[project.scripts]
+docdb = "src.main:main"
+
+[tool.setuptools.packages.find]
+include = ["src*"]

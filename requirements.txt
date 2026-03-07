@@ -1,0 +1,55 @@
+# ============================================
+# docDB - Dependencies
+# ============================================
+# 설치: pip install -r requirements.txt
+
+# --- 문서 텍스트 추출 ---
+pdfplumber>=0.10.0
+PyPDF2>=3.0.0
+python-docx>=0.8.11
+python-pptx>=0.6.21
+openpyxl>=3.1.0
+xlrd>=2.0.1
+beautifulsoup4>=4.12.0
+chardet>=5.2.0
+lxml>=4.9.0
+
+# --- 로컬 임베딩 ---
+sentence-transformers>=2.7.0
+torch>=2.0.0
+transformers>=4.30.0
+tokenizers>=0.14.0
+
+# --- 벡터 DB ---
+chromadb>=0.4.0
+
+# --- MCP 서버 ---
+mcp[cli]>=1.0.0
+
+# --- 증분 인덱싱 ---
+# SQLite는 Python 내장
+
+# --- 유틸리티 ---
+PyYAML>=6.0
+pydantic>=2.0.0
+# python-dotenv>=1.0.0  # 현재 미사용
+loguru>=0.7.0
+tqdm>=4.66.0
+numpy>=1.24.0
+
+# --- HWP 추출 (설치 실패 시 fallback 사용) ---
+olefile>=0.47
+
+# --- OCR (스캔 PDF 텍스트 추출, 선택) ---
+# pdf2image는 poppler 필요: brew install poppler (macOS)
+# tesseract 폴백: brew install tesseract tesseract-lang
+pdf2image>=1.16.0
+pytesseract>=0.3.10
+pyobjc-framework-Vision>=10.0; sys_platform == 'darwin'
+pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'
+
+# --- 하이브리드 검색 ---
+rank_bm25>=0.2.2
+
+# --- 한국어 형태소 분석 (BM25 토크나이징 개선, 선택) ---
+# kiwipiepy>=0.17.0  # 미설치 시 공백 기반 토크나이징 사용
