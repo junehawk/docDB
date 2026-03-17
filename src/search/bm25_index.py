@@ -3,14 +3,14 @@ BM25 키워드 검색 인덱스
 ChromaDB의 벡터 검색과 병행하여 하이브리드 검색 지원
 """
 import hashlib
+import json
 import os
-import pickle
 import time
 from typing import List, Dict, Optional
 from loguru import logger
 
 from src.config import PROJECT_ROOT
-DEFAULT_CACHE_PATH = os.path.join(PROJECT_ROOT, 'data', 'bm25_cache.pkl')
+DEFAULT_CACHE_PATH = os.path.join(PROJECT_ROOT, 'data', 'bm25_cache.json')
 
 
 class BM25Index:
@@ -70,11 +70,20 @@ class BM25Index:
             logger.warning("ChromaDB에 문서가 없어 BM25 인덱스를 구축하지 않았습니다")
             return
 
-        # chunk_ids만 먼저 수집하여 해시 계산 (가벼운 호출)
+        # chunk_ids 전체 수집하여 해시 계산 (배치 페이지네이션)
         all_ids_for_hash = []
-        result = chroma_manager.collection.get(include=[])
-        if result['ids']:
-            all_ids_for_hash.extend(result['ids'])
+        HASH_BATCH = 10000
+        collection = chroma_manager.collection
+        for hash_offset in range(0, total_count, HASH_BATCH):
+            result = collection.get(
+                include=[],
+                limit=HASH_BATCH,
+                offset=hash_offset,
+            )
+            if result['ids']:
+                all_ids_for_hash.extend(result['ids'])
+            if not result['ids'] or len(result['ids']) < HASH_BATCH:
+                break
 
         ids_hash = self._compute_ids_hash(all_ids_for_hash)
 
@@ -90,8 +99,7 @@ class BM25Index:
 
         BATCH_SIZE = 5000
         collection = chroma_manager.collection
-        count = collection.count()
-        for offset in range(0, count, BATCH_SIZE):
+        for offset in range(0, total_count, BATCH_SIZE):
             result = collection.get(
                 include=['documents'],
                 limit=BATCH_SIZE,
@@ -103,19 +111,19 @@ class BM25Index:
 
         if all_ids:
             self.build(all_ids, all_texts)
-            self._save_cache(total_count)
+            self._save_cache(len(all_ids))
             elapsed = time.time() - start
             logger.info(f"BM25 캐시 저장 완료 ({self._cache_path}, {elapsed:.1f}초)")
 
     def _load_cache(self, expected_count: int, expected_ids_hash: str = None) -> bool:
-        """로컬 캐시에서 BM25 인덱스 로드"""
+        """로컬 캐시에서 BM25 인덱스 로드 (JSON 직렬화 사용)"""
         try:
             if not os.path.exists(self._cache_path):
                 return False
 
             start = time.time()
-            with open(self._cache_path, 'rb') as f:
-                cache = pickle.load(f)
+            with open(self._cache_path, 'r', encoding='utf-8') as f:
+                cache = json.load(f)
 
             if cache.get('count') != expected_count:
                 logger.info(
@@ -137,6 +145,12 @@ class BM25Index:
 
             self.chunk_ids = cache['chunk_ids']
             self._texts = cache['texts']
+
+            # 무결성 검증: 캐시 데이터 일관성 확인
+            if len(self.chunk_ids) != len(self._texts) or len(self.chunk_ids) != cache['count']:
+                logger.warning("BM25 캐시 무결성 오류 — 데이터 길이 불일치")
+                return False
+
             self.index = BM25Plus(self._texts)
             elapsed = time.time() - start
             logger.info(
@@ -144,6 +158,13 @@ class BM25Index:
             )
             return True
 
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            logger.warning(f"BM25 캐시 손상 — 삭제 후 재구축: {e}")
+            try:
+                os.remove(self._cache_path)
+            except OSError:
+                pass
+            return False
         except Exception as e:
             logger.warning(f"BM25 캐시 로드 실패 (재구축 예정): {e}")
             return False
@@ -155,7 +176,7 @@ class BM25Index:
         return hashlib.sha256(joined.encode()).hexdigest()
 
     def _save_cache(self, count: int):
-        """BM25 인덱스를 로컬 캐시로 저장"""
+        """BM25 인덱스를 로컬 캐시로 저장 (JSON 직렬화 사용)"""
         try:
             os.makedirs(os.path.dirname(self._cache_path), exist_ok=True)
             cache = {
@@ -164,8 +185,8 @@ class BM25Index:
                 'chunk_ids': self.chunk_ids,
                 'texts': self._texts,
             }
-            with open(self._cache_path, 'wb') as f:
-                pickle.dump(cache, f, protocol=pickle.HIGHEST_PROTOCOL)
+            with open(self._cache_path, 'w', encoding='utf-8') as f:
+                json.dump(cache, f, ensure_ascii=False)
         except Exception as e:
             logger.warning(f"BM25 캐시 저장 실패: {e}")
 

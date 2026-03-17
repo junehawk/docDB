@@ -384,7 +384,15 @@ class HWPExtractor(BaseExtractor):
         """
         try:
             import zipfile
-            from xml.etree import ElementTree as ET
+            try:
+                import defusedxml.ElementTree as ET
+            except ImportError:
+                import warnings
+                warnings.warn(
+                    "defusedxml 미설치 — XML 파싱에 stdlib 사용 (XXE 취약). 설치: pip install defusedxml",
+                    stacklevel=2,
+                )
+                from xml.etree import ElementTree as ET
         except ImportError:
             return self._create_error_result("zipfile or xml modules not available")
 

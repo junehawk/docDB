@@ -39,6 +39,7 @@ class DocumentProcessor:
 
         # 텍스트 형식
         ".txt": TxtExtractor,
+        ".md": TxtExtractor,
         ".html": HtmlExtractor,
         ".htm": HtmlExtractor,
         ".csv": CsvExtractor,
@@ -119,12 +120,16 @@ class DocumentProcessor:
             chunks = self._chunker.chunk(extraction_result.text)
 
             # 청크 리스트 생성
+            import hashlib as _hashlib
+            path_hash = _hashlib.sha256(str(file_path).encode()).hexdigest()[:12]
+            file_stat = file_path.stat()
+
             chunk_dicts = []
             for chunk_index, chunk_text in enumerate(chunks):
                 chunk_metadata = {
                     "file_path": str(file_path),
                     "file_name": file_path.name,
-                    "file_size": file_path.stat().st_size,
+                    "file_size": file_stat.st_size,
                     "extractor_used": extraction_result.extractor_used,
                     "chunk_index": chunk_index,
                     "total_chunks": len(chunks),
@@ -134,8 +139,6 @@ class DocumentProcessor:
                 if extraction_result.metadata:
                     chunk_metadata.update(extraction_result.metadata)
 
-                import hashlib as _hashlib
-                path_hash = _hashlib.md5(str(file_path).encode()).hexdigest()[:8]
                 chunk_dict = {
                     "text": chunk_text,
                     "chunk_id": f"{file_path.stem}_{path_hash}_{chunk_index}",
@@ -183,57 +186,6 @@ class DocumentProcessor:
         except Exception as e:
             logger.error(f"Failed to create extractor for {file_path}: {e}")
             return None
-
-    @staticmethod
-    def _chunk_text(
-        text: str,
-        chunk_size: int = 1000,
-        overlap: int = 100
-    ) -> List[str]:
-        """
-        텍스트를 겹치는 청크로 분할합니다.
-
-        Args:
-            text: 분할할 텍스트
-            chunk_size: 청크 크기 (문자 단위)
-            overlap: 청크 간 오버랩 (문자 단위)
-
-        Returns:
-            List[str]: 청크 리스트
-        """
-        if not text or chunk_size <= 0:
-            return [text] if text else []
-
-        chunks = []
-        start = 0
-        step = chunk_size - overlap  # 최소 전진 폭
-
-        while start < len(text):
-            # 청크의 끝 위치 계산
-            end = start + chunk_size
-
-            # 단어 경계에서 끝나도록 조정 (뒤로 이동 방지를 위해 start+overlap 이후만 탐색)
-            if end < len(text):
-                last_space = text.rfind(" ", start + overlap, end)
-                if last_space > 0:
-                    end = last_space
-
-            chunk = text[start:end].strip()
-
-            if chunk:
-                chunks.append(chunk)
-
-            # 다음 청크의 시작 위치 계산 (항상 전진 보장)
-            if end >= len(text):
-                break
-            start = max(start + step, end - overlap)
-
-        # 마지막 청크가 너무 작은 경우 이전 청크에 병합
-        if len(chunks) > 1 and len(chunks[-1]) < chunk_size / 2:
-            last_chunk = chunks.pop()
-            chunks[-1] = chunks[-1] + " " + last_chunk
-
-        return chunks
 
     @staticmethod
     def get_supported_extensions() -> List[str]:

@@ -4,13 +4,14 @@ docDB - 메인 엔트리포인트
 import argparse
 import asyncio
 import os
+import re
 import sys
 import time
-import hashlib
 from pathlib import Path
 from typing import Optional, Dict
 from loguru import logger
 from src.config import load_config as _load_config
+from src.indexing_pipeline import index_single_file, normalize_path, compute_mtime_hash
 
 
 def _setup_logger():
@@ -28,7 +29,8 @@ def _setup_logger():
         os.path.join(log_dir, "docdb.log"),
         format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
         level="DEBUG",
-        rotation="500 MB"
+        rotation="500 MB",
+        retention=5,
     )
 
 
@@ -79,10 +81,10 @@ def run_full_index(config_path: Optional[str] = None):
         chroma_path = config.get('vectorstore', {}).get('chroma_path', '~/.docdb/chroma_db')
         tracker_path = config.get('indexing', {}).get('tracker_db', '~/.docdb/index_tracker.db')
 
-        supported_ext = dp_config.get('supported_extensions', [
-            'hwp', 'hwpx', 'pdf', 'docx', 'pptx', 'xlsx', 'txt', 'html', 'csv', 'rtf'
-        ])
+        from src.incremental.file_scanner import FileScanner
+        supported_ext = set(dp_config.get('supported_extensions', list(FileScanner.SUPPORTED)))
         max_size_mb = dp_config.get('max_file_size_mb', 100)
+        max_size_bytes = max_size_mb * 1024 * 1024
         excluded = config.get('excluded_patterns', ['.DS_Store', '__pycache__', '.git'])
 
         logger.info(f"전체 인덱싱 시작: {doc_root}")
@@ -96,144 +98,97 @@ def run_full_index(config_path: Optional[str] = None):
         })
 
         chroma = _create_chroma_manager(config, chroma_path=chroma_path)
-        tracker = IndexTracker(db_path=tracker_path)
-        meta_extractor = MetadataExtractor(doc_root=doc_root)
 
-        # 임베딩 매니저 초기화
-        emb_manager = EmbeddingManager({
-            'model': emb_config.get('model', 'BAAI/bge-m3'),
-            'device': emb_config.get('device', 'auto'),
-        })
+        with IndexTracker(db_path=tracker_path) as tracker:
+            meta_extractor = MetadataExtractor(doc_root=doc_root)
 
-        # 대상 파일 수집
-        logger.info("파일 스캔 중...")
-        root_path = Path(os.path.expanduser(doc_root))
-        target_files = []
+            emb_manager = EmbeddingManager({
+                'model': emb_config.get('model', 'BAAI/bge-m3'),
+                'device': emb_config.get('device', 'auto'),
+            })
 
-        import re as _re
-        excluded_regex = [_re.compile(p) for p in excluded]
+            # 대상 파일 수집 — 단일 rglob 순회 + NFC 정규화
+            logger.info("파일 스캔 중...")
+            root_path = Path(os.path.expanduser(doc_root))
+            target_files = []
 
-        for ext in supported_ext:
-            for f in root_path.rglob(f"*.{ext}"):
-                # 제외 패턴 체크 (정규식)
-                str_f = str(f)
+            # 정규식 패턴 검증
+            excluded_regex = []
+            for p in excluded:
+                try:
+                    excluded_regex.append(re.compile(p))
+                except re.error as e:
+                    logger.warning(f"잘못된 제외 패턴 무시: '{p}': {e}")
+
+            supported_suffixes = {f'.{ext}' for ext in supported_ext}
+
+            for f in root_path.rglob('*'):
+                if f.suffix.lower() not in supported_suffixes:
+                    continue
+                str_f = normalize_path(f)
                 if any(p.search(str_f) for p in excluded_regex):
                     continue
-
-                # 파일 크기 체크
                 try:
-                    if f.stat().st_size > max_size_mb * 1024 * 1024:
+                    stat_result = f.stat()
+                    if stat_result.st_size > max_size_bytes:
                         logger.debug(f"파일 크기 초과 스킵: {f.name}")
                         continue
                 except OSError:
                     continue
-
                 target_files.append(f)
 
-        logger.info(f"인덱싱 대상: {len(target_files)}개 파일")
+            logger.info(f"인덱싱 대상: {len(target_files)}개 파일")
 
-        # 파일 처리
-        success_count = 0
-        fail_count = 0
-        skip_count = 0
-        total_chunks = 0
-        start_time = time.time()
+            # 파일 처리
+            success_count = 0
+            fail_count = 0
+            skip_count = 0
+            total_chunks = 0
+            batch_size = emb_config.get('batch_size', 32)
+            start_time = time.time()
 
-        for file_path in tqdm(target_files, desc="인덱싱"):
-            try:
-                str_path = str(file_path)
+            for file_path in tqdm(target_files, desc="인덱싱"):
+                str_path = normalize_path(file_path)
 
                 # 이미 인덱싱된 파일 스킵
-                mtime = file_path.stat().st_mtime
-                # 경로+수정시간 기반 해시 (실제 파일 콘텐츠 해시가 아님)
-                mtime_hash = hashlib.sha256(
-                    f"{str_path}:{mtime}".encode()
-                ).hexdigest()
+                try:
+                    mtime = file_path.stat().st_mtime
+                except OSError:
+                    fail_count += 1
+                    continue
+                mtime_hash = compute_mtime_hash(str_path, mtime)
 
                 if tracker.is_indexed(str_path, mtime_hash):
                     skip_count += 1
                     continue
 
-                # 문서 추출 + 청킹
-                chunks = processor.process_document(str_path)
+                # 이전에 인덱싱된 파일이면 변경된 것 (stale 청크 정리 필요)
+                is_changed = tracker.get_by_file_path(str_path) is not None
 
-                if not chunks:
-                    fail_count += 1
-                    tracker.record_error(str_path, "추출 실패 또는 빈 결과")
-                    continue
-
-                # 메타데이터 추출
-                extracted_text = "\n".join(chunk['text'] for chunk in chunks)
-                doc_properties = chunks[0].get('metadata', {}).get('doc_properties', {})
-                file_meta = meta_extractor.extract(
-                    str_path,
-                    extracted_text=extracted_text,
-                    doc_properties=doc_properties,
+                result = index_single_file(
+                    str_path, processor, meta_extractor, emb_manager, chroma, tracker,
+                    config, batch_size=batch_size, is_changed=is_changed, mtime=mtime,
                 )
 
-                for chunk in chunks:
-                    chunk['metadata'].update(file_meta)
-                    chunk['metadata']['file_type'] = file_path.suffix.lstrip('.')
-
-                # Contextual Retrieval: context 접두사 추가
-                contextual_config = config.get('contextual', {})
-                if contextual_config.get('enable', False):
-                    from src.search.context_builder import build_context_prefix
-                    for chunk in chunks:
-                        prefix = build_context_prefix({
-                            **file_meta,
-                            'file_name': file_path.name,
-                        })
-                        chunk['text'] = prefix + chunk['text']
-
-                # 배치 임베딩
-                texts = [chunk['text'] for chunk in chunks]
-                try:
-                    batch_size = emb_config.get('batch_size', 32)
-                    embeddings = emb_manager.embed_batch(texts, batch_size=batch_size)
-
-                    # 배치 ChromaDB 저장
-                    chroma_chunks = [
-                        {'id': chunk['chunk_id'], 'text': chunk['text'], 'metadata': chunk['metadata']}
-                        for chunk in chunks
-                    ]
-                    chroma.add_chunks(chroma_chunks, embeddings)
-                except Exception as e:
-                    logger.warning(f"배치 임베딩/저장 실패: {file_path.name}: {e}")
+                if result['success']:
+                    success_count += 1
+                    total_chunks += result['chunks']
+                else:
                     fail_count += 1
-                    continue
 
-                total_chunks += len(chunks)
+            elapsed = time.time() - start_time
 
-                # 추적 DB 업데이트
-                tracker.mark_indexed(
-                    file_path=str_path,
-                    mtime=mtime,
-                    content_hash=mtime_hash,
-                )
-                success_count += 1
-
-            except Exception as e:
-                fail_count += 1
-                logger.warning(f"파일 처리 실패: {file_path.name}: {e}")
-                try:
-                    tracker.record_error(str(file_path), str(e))
-                except Exception:
-                    pass
-
-        elapsed = time.time() - start_time
-
-        logger.info("=" * 60)
-        logger.info("전체 인덱싱 완료")
-        logger.info(f"  대상 파일: {len(target_files)}개")
-        logger.info(f"  성공: {success_count}개")
-        logger.info(f"  실패: {fail_count}개")
-        logger.info(f"  스킵(이미 인덱싱): {skip_count}개")
-        logger.info(f"  총 청크: {total_chunks}개")
-        logger.info(f"  소요 시간: {elapsed:.1f}초 ({elapsed/60:.1f}분)")
-        if (success_count + fail_count) > 0:
-            logger.info(f"  성공률: {success_count/(success_count+fail_count)*100:.1f}%")
-        logger.info("=" * 60)
+            logger.info("=" * 60)
+            logger.info("전체 인덱싱 완료")
+            logger.info(f"  대상 파일: {len(target_files)}개")
+            logger.info(f"  성공: {success_count}개")
+            logger.info(f"  실패: {fail_count}개")
+            logger.info(f"  스킵(이미 인덱싱): {skip_count}개")
+            logger.info(f"  총 청크: {total_chunks}개")
+            logger.info(f"  소요 시간: {elapsed:.1f}초 ({elapsed/60:.1f}분)")
+            if (success_count + fail_count) > 0:
+                logger.info(f"  성공률: {success_count/(success_count+fail_count)*100:.1f}%")
+            logger.info("=" * 60)
 
     except Exception as e:
         logger.error(f"전체 인덱싱 실패: {e}", exc_info=True)
@@ -266,107 +221,63 @@ def run_incremental_index(config_path: Optional[str] = None):
         })
 
         chroma = _create_chroma_manager(config, chroma_path=chroma_path)
-        tracker = IndexTracker(db_path=tracker_path)
-        meta_extractor = MetadataExtractor(doc_root=doc_root)
 
-        excluded = config.get('excluded_patterns', [])
+        with IndexTracker(db_path=tracker_path) as tracker:
+            meta_extractor = MetadataExtractor(doc_root=doc_root)
 
-        scanner = FileScanner(
-            doc_root=doc_root,
-            tracker=tracker,
-            excluded_patterns=excluded,
-            max_file_size_mb=dp_config.get('max_file_size_mb', 100),
-        )
+            excluded = config.get('excluded_patterns', [])
 
-        emb_manager = EmbeddingManager({
-            'model': emb_config.get('model', 'BAAI/bge-m3'),
-            'device': emb_config.get('device', 'auto'),
-        })
+            scanner = FileScanner(
+                doc_root=doc_root,
+                tracker=tracker,
+                excluded_patterns=excluded,
+                max_file_size_mb=dp_config.get('max_file_size_mb', 100),
+            )
 
-        # 차이 스캔
-        new_files, changed_files, deleted_files = scanner.scan_and_diff()
+            emb_manager = EmbeddingManager({
+                'model': emb_config.get('model', 'BAAI/bge-m3'),
+                'device': emb_config.get('device', 'auto'),
+            })
 
-        logger.info(
-            f"변경 감지: 신규 {len(new_files)}, "
-            f"변경 {len(changed_files)}, 삭제 {len(deleted_files)}"
-        )
+            # 차이 스캔
+            new_files, changed_files, deleted_files = scanner.scan_and_diff()
 
-        # 삭제 처리
-        for file_path in deleted_files:
-            try:
-                chroma.delete_by_file(file_path)
-                tracker.mark_deleted(file_path)
-                logger.debug(f"삭제 처리: {file_path}")
-            except Exception as e:
-                logger.warning(f"삭제 처리 실패: {file_path}: {e}")
+            logger.info(
+                f"변경 감지: 신규 {len(new_files)}, "
+                f"변경 {len(changed_files)}, 삭제 {len(deleted_files)}"
+            )
 
-        # 신규 + 변경 처리
-        process_files = new_files + changed_files
-        changed_set = set(changed_files)
-        success = 0
-        fail = 0
+            # 삭제 처리
+            for file_path in deleted_files:
+                try:
+                    chroma.delete_by_file(file_path)
+                    tracker.mark_deleted(file_path)
+                    logger.debug(f"삭제 처리: {file_path}")
+                except Exception as e:
+                    logger.warning(f"삭제 처리 실패: {file_path}: {e}")
 
-        for file_path in process_files:
-            try:
-                if file_path in changed_set:
-                    chroma.delete_by_file(str(file_path))
+            # 신규 + 변경 처리 (공통 파이프라인 사용)
+            process_files = new_files + changed_files
+            changed_set = set(changed_files)
+            batch_size = emb_config.get('batch_size', 32)
+            success = 0
+            fail = 0
 
-                chunks = processor.process_document(str(file_path))
-                if not chunks:
-                    fail += 1
-                    continue
-
-                extracted_text = "\n".join(chunk['text'] for chunk in chunks)
-                doc_properties = chunks[0].get('metadata', {}).get('doc_properties', {})
-                file_meta = meta_extractor.extract(
-                    str(file_path),
-                    extracted_text=extracted_text,
-                    doc_properties=doc_properties,
+            for file_path in process_files:
+                result = index_single_file(
+                    file_path, processor, meta_extractor, emb_manager, chroma, tracker,
+                    config, batch_size=batch_size,
+                    is_changed=(file_path in changed_set),
                 )
+                if result['success']:
+                    success += 1
+                else:
+                    fail += 1
 
-                for chunk in chunks:
-                    chunk['metadata'].update(file_meta)
-                    chunk['metadata']['file_type'] = Path(file_path).suffix.lstrip('.')
-
-                # Contextual Retrieval: context 접두사 추가
-                contextual_config = config.get('contextual', {})
-                if contextual_config.get('enable', False):
-                    from src.search.context_builder import build_context_prefix
-                    for chunk in chunks:
-                        prefix = build_context_prefix({
-                            **file_meta,
-                            'file_name': Path(file_path).name,
-                        })
-                        chunk['text'] = prefix + chunk['text']
-
-                # 배치 임베딩
-                texts = [chunk['text'] for chunk in chunks]
-                batch_size = emb_config.get('batch_size', 32)
-                embeddings = emb_manager.embed_batch(texts, batch_size=batch_size)
-
-                # 배치 ChromaDB 저장
-                chroma_chunks = [
-                    {'id': chunk['chunk_id'], 'text': chunk['text'], 'metadata': chunk['metadata']}
-                    for chunk in chunks
-                ]
-                chroma.add_chunks(chroma_chunks, embeddings)
-
-                mtime = Path(file_path).stat().st_mtime
-                # 경로+수정시간 기반 해시 (실제 파일 콘텐츠 해시가 아님)
-                mtime_hash = hashlib.sha256(
-                    f"{file_path}:{mtime}".encode()
-                ).hexdigest()
-                tracker.mark_indexed(str(file_path), mtime, mtime_hash)
-                success += 1
-
-            except Exception as e:
-                fail += 1
-                logger.warning(f"증분 처리 실패: {file_path}: {e}")
-
-        logger.info(
-            f"증분 인덱싱 완료: 성공 {success}, "
-            f"실패 {fail}, 삭제 {len(deleted_files)}"
-        )
+            logger.info(
+                f"증분 인덱싱 완료: 성공 {success}, "
+                f"실패 {fail}, 삭제 {len(deleted_files)}"
+            )
 
     except Exception as e:
         logger.error(f"증분 인덱싱 실패: {e}", exc_info=True)
@@ -453,22 +364,22 @@ def show_stats(config_path: Optional[str] = None):
         tracker_path = config.get('indexing', {}).get('tracker_db', '~/.docdb/index_tracker.db')
 
         chroma = _create_chroma_manager(config)
-        tracker = IndexTracker(db_path=tracker_path)
 
-        chroma_stats = chroma.get_stats()
+        with IndexTracker(db_path=tracker_path) as tracker:
+            chroma_stats = chroma.get_stats()
 
-        print(f"\n{'='*50}")
-        print("docDB 통계")
-        print(f"{'='*50}")
+            print(f"\n{'='*50}")
+            print("docDB 통계")
+            print(f"{'='*50}")
 
-        print("\n[벡터 DB (ChromaDB)]")
-        for key, value in chroma_stats.items():
-            print(f"  {key}: {value}")
+            print("\n[벡터 DB (ChromaDB)]")
+            for key, value in chroma_stats.items():
+                print(f"  {key}: {value}")
 
-        tracker_stats = tracker.get_stats()
-        print("\n[인덱싱 추적 DB]")
-        for key, value in tracker_stats.items():
-            print(f"  {key}: {value}")
+            tracker_stats = tracker.get_stats()
+            print("\n[인덱싱 추적 DB]")
+            for key, value in tracker_stats.items():
+                print(f"  {key}: {value}")
 
         print(f"\n{'='*50}")
 

@@ -17,6 +17,7 @@ document_processing:
     - xls
     - csv
     - txt
+    - md
     - html
     - rtf
     - pages

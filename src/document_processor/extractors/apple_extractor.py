@@ -4,7 +4,15 @@ Apple 앱의 파일들은 ZIP 컨테이너로 되어있습니다.
 """
 
 import zipfile
-from xml.etree import ElementTree as ET
+try:
+    import defusedxml.ElementTree as ET
+except ImportError:
+    import warnings
+    warnings.warn(
+        "defusedxml 미설치 — XML 파싱에 stdlib 사용 (XXE 취약). 설치: pip install defusedxml",
+        stacklevel=2,
+    )
+    from xml.etree import ElementTree as ET
 from loguru import logger
 
 from .base_extractor import BaseExtractor, ExtractionResult

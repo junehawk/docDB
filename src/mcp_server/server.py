@@ -156,6 +156,9 @@ class DocDBServer:
             })
             self.meta_extractor = MetadataExtractor(doc_root=doc_root)
 
+            # asyncio.Lock은 event loop 존재 시점에 생성
+            self._bm25_lock = asyncio.Lock()
+
             logger.info("서버 컴포넌트 초기화 완료 (로컬 모드)")
 
         except ImportError as e:
@@ -304,16 +307,8 @@ class DocDBServer:
             return CallToolResult(content=[result])
 
         except Exception as e:
-            logger.error(f"도구 호출 실패 ({name}): {e}")
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=json.dumps({
-                        "error": str(e)
-                    }, ensure_ascii=False, indent=2)
-                )],
-                isError=True
-            )
+            logger.error(f"도구 호출 실패 ({name}): {e}", exc_info=True)
+            return self._error_response("내부 오류가 발생했습니다")
 
     async def _search_documents(self, arguments: Dict[str, Any]):
         """문서 검색"""
@@ -322,7 +317,7 @@ class DocDBServer:
             if not query:
                 return self._error_response("query 파라미터는 필수입니다")
 
-            n_results = arguments.get('n_results', 10)
+            n_results = max(1, min(int(arguments.get('n_results', 10)), 100))
 
             # BM25 인덱스 lazy build (첫 검색 시, 동시 build 방지 Lock 사용)
             if self._pending_bm25_build and self.retriever and self.retriever.bm25_index:
@@ -381,8 +376,8 @@ class DocDBServer:
             )
 
         except Exception as e:
-            logger.error(f"검색 실패: {e}")
-            return self._error_response(str(e))
+            logger.error(f"검색 실패: {e}", exc_info=True)
+            return self._error_response("검색 중 오류가 발생했습니다")
 
     async def _get_document(self, arguments: Dict[str, Any]):
         """특정 문서 조회 - DocumentProcessor로 텍스트 추출"""
@@ -392,31 +387,36 @@ class DocDBServer:
                 return self._error_response("file_path 파라미터는 필수입니다")
 
             import os
-            if not os.path.isfile(file_path):
-                return self._error_response(f"파일을 찾을 수 없습니다: {file_path}")
 
             # path traversal 방지: doc_root 하위 경로만 허용
             doc_root = self._get_config_value('document_processing', 'doc_root', default='')
-            if doc_root:
-                resolved = os.path.realpath(file_path)
-                root_resolved = os.path.realpath(os.path.expanduser(doc_root))
-                if not resolved.startswith(root_resolved + os.sep) and resolved != root_resolved:
-                    logger.warning(f"Path traversal 차단: {file_path} (doc_root: {doc_root})")
-                    return self._error_response("허용되지 않은 경로입니다")
+            if not doc_root:
+                return self._error_response("doc_root가 설정되지 않았습니다. 파일 접근이 거부되었습니다.")
+
+            import unicodedata
+            file_path = os.path.expanduser(file_path)
+            resolved = unicodedata.normalize('NFC', os.path.realpath(file_path))
+            root_resolved = unicodedata.normalize('NFC', os.path.realpath(os.path.expanduser(doc_root)))
+            if not resolved.startswith(root_resolved + os.sep) and resolved != root_resolved:
+                logger.warning(f"Path traversal 차단: {file_path} (doc_root: {doc_root})")
+                return self._error_response("허용되지 않은 경로입니다")
+
+            if not os.path.isfile(resolved):
+                return self._error_response(f"파일을 찾을 수 없습니다: {file_path}")
 
             if not self.processor:
                 return self._error_response("DocumentProcessor가 초기화되지 않았습니다.")
 
             chunks = await asyncio.get_running_loop().run_in_executor(
-                None, self.processor.process_document, file_path
+                None, self.processor.process_document, resolved
             )
 
             if not chunks:
                 return self._error_response(f"문서에서 텍스트를 추출할 수 없습니다: {file_path}")
 
-            # 페이지네이션 파라미터
-            chunk_offset = arguments.get('chunk_offset', 0)
-            chunk_limit = min(arguments.get('chunk_limit', 50), 50)
+            # 페이지네이션 파라미터 (bounds 검증)
+            chunk_offset = max(0, int(arguments.get('chunk_offset', 0)))
+            chunk_limit = max(1, min(int(arguments.get('chunk_limit', 50)), 50))
 
             total_chunks = len(chunks)
             page_chunks = chunks[chunk_offset:chunk_offset + chunk_limit]
@@ -440,8 +440,8 @@ class DocDBServer:
             )
 
         except Exception as e:
-            logger.error(f"문서 조회 실패: {e}")
-            return self._error_response(str(e))
+            logger.error(f"문서 조회 실패: {e}", exc_info=True)
+            return self._error_response("문서 조회 중 오류가 발생했습니다")
 
     async def _list_documents(self, arguments: Dict[str, Any]):
         """문서 목록 조회 - ChromaDB 메타데이터 기반 필터링"""
@@ -451,7 +451,7 @@ class DocDBServer:
             file_type_filter = arguments.get('file_type')
             author_filter = arguments.get('author')
             doc_type_filter = arguments.get('doc_type')
-            limit = arguments.get('limit', 20)
+            limit = max(1, min(int(arguments.get('limit', 20)), 100))
 
             if not self.chroma_manager:
                 return self._error_response("ChromaDB가 초기화되지 않았습니다.")
@@ -472,12 +472,14 @@ class DocDBServer:
                 elif len(conditions) > 1:
                     where_filter = {'$and': conditions}
 
-                # ChromaDB에서 메타데이터 조회
+                # ChromaDB에서 메타데이터 조회 (메모리 보호를 위해 상한 설정)
+                MAX_FETCH = limit * 20  # 중복 제거 감안한 상한
                 try:
                     collection = self.chroma_manager.collection
                     result = collection.get(
                         where=where_filter,
                         include=['metadatas'],
+                        limit=MAX_FETCH,
                     )
                 except Exception as e:
                     logger.warning(f"ChromaDB 조회 실패: {e}")
@@ -523,8 +525,8 @@ class DocDBServer:
             )
 
         except Exception as e:
-            logger.error(f"문서 목록 조회 실패: {e}")
-            return self._error_response(str(e))
+            logger.error(f"문서 목록 조회 실패: {e}", exc_info=True)
+            return self._error_response("문서 목록 조회 중 오류가 발생했습니다")
 
     async def _reindex(self, arguments: Dict[str, Any]):
         """증분 인덱싱 실행 - scan_and_diff 후 신규/변경/삭제 처리"""
@@ -533,13 +535,8 @@ class DocDBServer:
                 return self._error_response("서버 컴포넌트가 초기화되지 않았습니다.")
 
             def _do_reindex():
-                import hashlib
                 import time
-                from pathlib import Path
-
-                processor = self.processor
-                meta_extractor = self.meta_extractor
-                emb_manager = self.embedding_manager
+                from src.indexing_pipeline import index_single_file
 
                 start_time = time.time()
 
@@ -557,80 +554,28 @@ class DocDBServer:
                     except Exception as e:
                         logger.warning(f"삭제 처리 실패: {file_path}: {e}")
 
-                # 신규 + 변경 처리
+                # 신규 + 변경 처리 (공통 파이프라인 사용)
                 process_files = new_files + changed_files
                 success = 0
                 fail = 0
                 total_chunks = 0
 
                 for file_path in process_files:
-                    try:
-                        # 변경된 파일은 기존 청크 삭제 후 재인덱싱
-                        if file_path in changed_set:
-                            self.chroma_manager.delete_by_file(str(file_path))
-
-                        chunks = processor.process_document(str(file_path))
-                        if not chunks:
-                            fail += 1
-                            self.tracker.record_error(str(file_path), "추출 실패 또는 빈 결과")
-                            continue
-
-                        extracted_text = "\n".join(chunk['text'] for chunk in chunks)
-                        doc_properties = chunks[0].get('metadata', {}).get('doc_properties', {})
-                        file_meta = meta_extractor.extract(
-                            str(file_path),
-                            extracted_text=extracted_text,
-                            doc_properties=doc_properties,
-                        )
-
-                        for chunk in chunks:
-                            chunk['metadata'].update(file_meta)
-                            chunk['metadata']['file_type'] = Path(file_path).suffix.lstrip('.')
-
-                        # Contextual Retrieval: context 접두사 추가
-                        contextual_config = self.config.get('contextual', {})
-                        if contextual_config.get('enable', False):
-                            from src.search.context_builder import build_context_prefix
-                            for chunk in chunks:
-                                prefix = build_context_prefix({
-                                    **file_meta,
-                                    'file_name': Path(file_path).name,
-                                })
-                                chunk['text'] = prefix + chunk['text']
-
-                        # 배치 임베딩
-                        texts = [chunk['text'] for chunk in chunks]
-                        embeddings = emb_manager.embed_batch(texts, batch_size=64)
-
-                        # 배치 ChromaDB 저장
-                        chroma_chunks = [
-                            {'id': chunk['chunk_id'], 'text': chunk['text'], 'metadata': chunk['metadata']}
-                            for chunk in chunks
-                        ]
-                        self.chroma_manager.add_chunks(chroma_chunks, embeddings)
-
-                        total_chunks += len(chunks)
-
-                        mtime = Path(file_path).stat().st_mtime
-                        mtime_hash = hashlib.sha256(
-                            f"{file_path}:{mtime}".encode()
-                        ).hexdigest()
-                        self.tracker.mark_indexed(
-                            str(file_path), mtime, mtime_hash
-                        )
+                    result = index_single_file(
+                        file_path, self.processor, self.meta_extractor,
+                        self.embedding_manager, self.chroma_manager, self.tracker,
+                        self.config, batch_size=64,
+                        is_changed=(file_path in changed_set),
+                    )
+                    if result['success']:
                         success += 1
-
-                    except Exception as e:
+                        total_chunks += result['chunks']
+                    else:
                         fail += 1
-                        logger.warning(f"증분 처리 실패: {file_path}: {e}")
-                        try:
-                            self.tracker.record_error(str(file_path), str(e))
-                        except Exception:
-                            pass
 
                 elapsed = time.time() - start_time
 
-                result = {
+                reindex_result = {
                     "status": "완료",
                     "detected": {
                         "new_files": len(new_files),
@@ -649,9 +594,9 @@ class DocDBServer:
                 # BM25 인덱스 재구축 (hybrid 모드)
                 if self.retriever and self.retriever.bm25_index:
                     self.retriever.bm25_index.build_from_chroma(self.chroma_manager)
-                    result["bm25_rebuilt"] = True
+                    reindex_result["bm25_rebuilt"] = True
 
-                return result
+                return reindex_result
 
             # 블로킹 I/O를 executor에서 실행
             result = await asyncio.get_running_loop().run_in_executor(
@@ -664,8 +609,8 @@ class DocDBServer:
             )
 
         except Exception as e:
-            logger.error(f"인덱싱 실패: {e}")
-            return self._error_response(str(e))
+            logger.error(f"인덱싱 실패: {e}", exc_info=True)
+            return self._error_response("인덱싱 중 오류가 발생했습니다")
 
     async def _get_stats(self, arguments: Dict[str, Any]):
         """통계 조회"""
@@ -690,8 +635,8 @@ class DocDBServer:
             )
 
         except Exception as e:
-            logger.error(f"통계 조회 실패: {e}")
-            return self._error_response(str(e))
+            logger.error(f"통계 조회 실패: {e}", exc_info=True)
+            return self._error_response("통계 조회 중 오류가 발생했습니다")
 
     async def run(self):
         """MCP 서버 실행"""
@@ -711,6 +656,13 @@ class DocDBServer:
         except Exception as e:
             logger.error(f"서버 실행 실패: {e}")
             raise
+        finally:
+            # 리소스 정리
+            if self.tracker:
+                try:
+                    self.tracker.close()
+                except Exception as e:
+                    logger.debug(f"Tracker 종료 중 오류: {e}")
 
 
 async def main(config_path: Optional[str] = None):

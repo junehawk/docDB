@@ -247,13 +247,10 @@ class XlsExtractor(BaseExtractor):
                     for c in range(sheet.ncols):
                         val = sheet.cell_value(r, c)
                         if val not in (None, ''):
-                            row_values.append(str(val))
+                            header = headers[c] if c < len(headers) else f'Col{c}'
+                            row_values.append(f"{header}: {val}")
                     if row_values:
-                        row_text = ", ".join(
-                            f"{headers[i] if i < len(headers) else f'Col{i}'}: {val}"
-                            for i, val in enumerate(row_values)
-                        )
-                        sheet_rows.append(row_text)
+                        sheet_rows.append(", ".join(row_values))
 
                 if sheet_rows:
                     text_parts.append(f"\n[Sheet: {sheet.name}]\n" + "\n".join(sheet_rows))
@@ -364,7 +361,10 @@ class XlsxExtractor(BaseExtractor):
         """
         sheet_rows = []
 
-        # 헤더 행 추출
+        # 헤더 행 추출 (빈 워크시트 가드)
+        if worksheet.max_row is None or worksheet.max_row < 1:
+            return ""
+
         headers = []
         for cell in worksheet[1]:
             headers.append(str(cell.value) if cell.value is not None else "")
@@ -378,15 +378,14 @@ class XlsxExtractor(BaseExtractor):
                 break
 
             row_values = []
-            for cell in row:
+            for col_idx, cell in enumerate(row):
                 cell_value = cell.value
                 if cell_value is not None:
-                    row_values.append(str(cell_value))
+                    header = headers[col_idx] if col_idx < len(headers) else f'Col{col_idx}'
+                    row_values.append(f"{header}: {cell_value}")
 
-            if any(row_values):
-                row_text = ", ".join(f"{headers[i] if i < len(headers) else f'Col{i}'}: {val}"
-                                    for i, val in enumerate(row_values))
-                sheet_rows.append(row_text)
+            if row_values:
+                sheet_rows.append(", ".join(row_values))
                 row_count += 1
 
         return "\n".join(sheet_rows) if sheet_rows else ""

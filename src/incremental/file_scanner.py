@@ -14,7 +14,7 @@ class FileScanner:
 
     SUPPORTED = {
         'hwp', 'hwpx', 'pdf', 'docx', 'pptx', 'xlsx', 'xls',
-        'csv', 'txt', 'html', 'rtf', 'pages', 'numbers', 'key'
+        'csv', 'txt', 'md', 'html', 'htm', 'rtf', 'pages', 'numbers', 'key'
     }
 
     def __init__(
@@ -53,7 +53,12 @@ class FileScanner:
             if excluded_patterns:
                 self.excluded_patterns.extend(excluded_patterns)
 
-            self.excluded_regex = [re.compile(p) for p in self.excluded_patterns]
+            self.excluded_regex = []
+            for p in self.excluded_patterns:
+                try:
+                    self.excluded_regex.append(re.compile(p))
+                except re.error as e:
+                    logger.warning(f"잘못된 제외 패턴 무시: '{p}': {e}")
 
             logger.info(f"FileScanner 초기화: {doc_root}")
 

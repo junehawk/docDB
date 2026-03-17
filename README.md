@@ -275,7 +275,7 @@ python -m src.main --mode stats
 |------|------|
 | 벡터 DB | `data/chroma_db/` |
 | 인덱싱 추적 DB | `data/index_tracker.db` |
-| BM25 캐시 | `data/bm25_cache.pkl` |
+| BM25 캐시 | `data/bm25_cache.json` |
 | 로그 | `data/logs/` |
 
 ---
@@ -286,6 +286,7 @@ python -m src.main --mode stats
 - macOS / Linux / Windows
 - 디스크 여유 공간 ~10GB (벡터 DB + 모델 캐시)
 - LibreOffice (선택사항, HWP fallback용)
+- defusedxml (XML 파싱 보안, `pip install` 시 자동 설치)
 
 ---
 
@@ -298,6 +299,7 @@ docdb/
 ├── src/
 │   ├── main.py                  # CLI 엔트리포인트
 │   ├── config.py                # 설정 로더
+│   ├── indexing_pipeline.py     # 공통 인덱싱 파이프라인
 │   ├── document_processor/
 │   │   ├── extractors/          # 14개 포맷 추출기
 │   │   ├── chunking/            # 한국어 청킹

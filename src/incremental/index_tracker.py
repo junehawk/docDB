@@ -300,33 +300,34 @@ class IndexTracker:
     def record_error(self, file_path: str, error_msg: str) -> bool:
         """파일 인덱싱 오류 기록 — 기존 성공 기록이 있으면 보존하고 에러만 기록"""
         try:
-            has_existing = False
             with self._lock:
                 cursor = self.conn.execute(
-                    "SELECT file_mtime FROM indexed_files WHERE file_path = ?",
+                    "SELECT is_indexed FROM indexed_files WHERE file_path = ?",
                     (file_path,)
                 )
                 existing = cursor.fetchone()
-                if existing and existing[0] > 0:
+                if existing and existing[0] == 1:
                     # 기존 성공 기록 보존, 에러 메시지만 업데이트
                     self.conn.execute(
                         "UPDATE indexed_files SET error_msg = ? WHERE file_path = ?",
                         (error_msg, file_path)
                     )
                     self.conn.commit()
-                    has_existing = True
+                    return True
 
-            if has_existing:
+                # 기존 기록 없음 — 에러 기록 삽입 (lock 내에서 처리)
+                from datetime import datetime
+                self.conn.execute(
+                    """
+                    INSERT OR REPLACE INTO indexed_files
+                    (file_path, file_mtime, content_hash, last_indexed, is_indexed,
+                     embedding_model, error_msg)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (file_path, 0, '', datetime.now().isoformat(), 0, None, error_msg)
+                )
+                self.conn.commit()
                 return True
-
-            # 기존 기록 없음 — 에러 기록 삽입
-            return self.record(
-                file_path=file_path,
-                mtime=0,
-                content_hash='',
-                is_indexed=False,
-                error=error_msg,
-            )
         except Exception as e:
             logger.error(f"에러 기록 실패: {file_path}, {e}")
             return False
