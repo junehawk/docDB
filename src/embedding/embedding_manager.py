@@ -164,6 +164,11 @@ class EmbeddingManager:
             logger.error(f"Failed to embed query: {e}")
             raise RuntimeError(f"Failed to embed query: {e}") from e
 
+    @property
+    def is_loaded(self) -> bool:
+        """임베딩 모델이 로드되었는지 확인"""
+        return self.local_embedder.is_loaded
+
     def get_embedding_info(self) -> Dict:
         """
         현재 임베딩 설정 정보 반환

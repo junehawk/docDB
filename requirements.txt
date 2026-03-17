@@ -40,13 +40,14 @@ numpy>=1.24.0
 # --- HWP 추출 (설치 실패 시 fallback 사용) ---
 olefile>=0.47
 
-# --- OCR (스캔 PDF 텍스트 추출, 선택) ---
-# pdf2image는 poppler 필요: brew install poppler (macOS)
-# tesseract 폴백: brew install tesseract tesseract-lang
-pdf2image>=1.16.0
-pytesseract>=0.3.10
-pyobjc-framework-Vision>=10.0; sys_platform == 'darwin'
-pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'
+# --- OCR (스캔 PDF 텍스트 추출, 선택적 설치) ---
+# 스캔 PDF에서 텍스트를 추출하려면 별도 설치 필요:
+#   pip install -e ".[ocr]"    (pyproject.toml 기준)
+#   또는 직접 설치:
+#     pip install pdf2image pytesseract
+#     brew install poppler tesseract tesseract-lang   (macOS)
+#     apt install poppler-utils tesseract-ocr          (Linux)
+# macOS에서는 pyobjc Vision 프레임워크가 자동으로 사용됩니다.
 
 # --- 보안 ---
 defusedxml>=0.7.0
