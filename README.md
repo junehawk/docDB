@@ -98,16 +98,31 @@ pip install -e .
 ### 2. 설정
 
 ```bash
-# 자동 설정 (디바이스 감지 + 문서 폴더 경로 → config.yaml 생성)
 python setup.py
 ```
 
-또는 `config/config.yaml`을 직접 수정 — **딱 한 줄만 바꾸면 됩니다**:
+자동으로 3단계를 진행합니다:
 
-```yaml
-document_processing:
-  doc_root: '~/Documents/내문서폴더'  # 👈 여기만 수정
 ```
+[1/3] 디바이스 감지 중...
+  -> Apple Silicon (MPS)                    # MPS / CUDA / CPU 자동 선택
+
+[2/3] 문서 폴더 설정
+인덱싱할 문서 폴더 경로를 입력하세요.
+  기본값: /Users/you/Documents              # OS별 기본 문서 폴더 자동 감지
+  경로 (Enter=기본값): ~/Research/papers    # 원하는 경로 입력 또는 Enter
+  -> 지원 포맷 파일 142개 발견              # 16개 포맷 자동 스캔
+
+[3/3] 설정 파일 생성
+  -> 저장 완료: config/config.yaml          # 기존 설정이 있으면 .bak 백업
+```
+
+> 수동 설정도 가능합니다 — `config/config.yaml`에서 **딱 한 줄만 바꾸면 됩니다**:
+>
+> ```yaml
+> document_processing:
+>   doc_root: '~/Documents/내문서폴더'  # 👈 여기만 수정
+> ```
 
 ### 3. 인덱싱
 
