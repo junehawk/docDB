@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "KISTI Data Platform Research Group"}
+    {name = "docDB Contributors"}
 ]
 
 dependencies = [

@@ -81,6 +81,18 @@ def run_full_index(config_path: Optional[str] = None):
         chroma_path = config.get('vectorstore', {}).get('chroma_path', '~/.docdb/chroma_db')
         tracker_path = config.get('indexing', {}).get('tracker_db', '~/.docdb/index_tracker.db')
 
+        # 기본 doc_root 경고 (setup.py 없이 실행한 경우)
+        expanded_root = os.path.expanduser(doc_root)
+        default_docs = os.path.expanduser('~/Documents')
+        if os.path.realpath(expanded_root) == os.path.realpath(default_docs):
+            print("\n  [주의] doc_root가 기본값(~/Documents)으로 설정되어 있습니다.")
+            print("  전체 Documents 폴더가 인덱싱됩니다. 의도한 것이 맞나요?")
+            print("  특정 하위 폴더만 인덱싱하려면 config/config.yaml의 doc_root를 수정하세요.")
+            confirm = input("  계속 진행하시겠습니까? (y/N): ").strip().lower()
+            if confirm != 'y':
+                print("  -> 중단합니다. config/config.yaml을 수정하거나 python setup.py를 실행하세요.")
+                sys.exit(0)
+
         from src.incremental.file_scanner import FileScanner
         supported_ext = set(dp_config.get('supported_extensions', list(FileScanner.SUPPORTED)))
         max_size_mb = dp_config.get('max_file_size_mb', 100)
@@ -138,6 +150,12 @@ def run_full_index(config_path: Optional[str] = None):
                 target_files.append(f)
 
             logger.info(f"인덱싱 대상: {len(target_files)}개 파일")
+
+            # 최초 실행 시 모델 다운로드 안내
+            if not emb_manager.is_loaded:
+                model_name = emb_config.get('model', 'BAAI/bge-m3')
+                print(f"\n  [안내] 첫 실행 시 임베딩 모델({model_name}, ~500MB)을 다운로드합니다.")
+                print(f"  네트워크 상태에 따라 수 분이 소요될 수 있습니다. 잠시만 기다려주세요.\n")
 
             # 파일 처리
             success_count = 0
@@ -238,6 +256,12 @@ def run_incremental_index(config_path: Optional[str] = None):
                 'model': emb_config.get('model', 'BAAI/bge-m3'),
                 'device': emb_config.get('device', 'auto'),
             })
+
+            # 최초 실행 시 모델 다운로드 안내
+            if not emb_manager.is_loaded:
+                model_name = emb_config.get('model', 'BAAI/bge-m3')
+                print(f"\n  [안내] 첫 실행 시 임베딩 모델({model_name}, ~500MB)을 다운로드합니다.")
+                print(f"  네트워크 상태에 따라 수 분이 소요될 수 있습니다. 잠시만 기다려주세요.\n")
 
             # 차이 스캔
             new_files, changed_files, deleted_files = scanner.scan_and_diff()

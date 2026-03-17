@@ -113,6 +113,11 @@ class DocDBServer:
                 'device': emb_config.get('device', 'auto'),
             })
 
+            # 최초 실행 시 모델 다운로드 안내 (MCP 서버 로그)
+            if not self.embedding_manager.is_loaded:
+                model_name = emb_config.get('model', 'BAAI/bge-m3')
+                logger.info(f"첫 검색 시 임베딩 모델({model_name}, ~500MB)을 다운로드합니다.")
+
             # Contextual Retrieval: BM25 + Reranker 설정
             search_config = self.config.get('search', {})
             reranker_config = self.config.get('reranker', {})
