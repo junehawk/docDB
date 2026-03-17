@@ -21,9 +21,29 @@ def detect_device() -> str:
     return 'cpu'
 
 
+def _get_default_documents_dir() -> str:
+    """OS별 기본 문서 폴더 경로 반환"""
+    if sys.platform == 'win32':
+        # Windows: USERPROFILE\Documents (또는 한국어 '문서')
+        # 먼저 Known Folder API 시도, 실패 시 USERPROFILE 기반
+        try:
+            import ctypes.wintypes
+            CSIDL_PERSONAL = 5  # Documents folder
+            buf = ctypes.create_unicode_buffer(ctypes.wintypes.MAX_PATH)
+            ctypes.windll.shell32.SHGetFolderPathW(None, CSIDL_PERSONAL, None, 0, buf)
+            if buf.value and os.path.isdir(buf.value):
+                return buf.value
+        except Exception:
+            pass
+        return os.path.join(os.path.expanduser('~'), 'Documents')
+    else:
+        # macOS / Linux
+        return os.path.join(os.path.expanduser('~'), 'Documents')
+
+
 def get_doc_root() -> str:
     """사용자에게 문서 폴더 경로 입력받기"""
-    default = os.path.expanduser('~/Documents')
+    default = _get_default_documents_dir()
 
     print(f"\n인덱싱할 문서 폴더 경로를 입력하세요.")
     print(f"  기본값: {default}")
@@ -49,7 +69,8 @@ def count_supported_files(doc_root: str) -> int:
     """지원 포맷 파일 수 카운트"""
     extensions = {
         '.hwp', '.hwpx', '.pdf', '.docx', '.pptx', '.xlsx', '.xls',
-        '.csv', '.txt', '.html', '.rtf', '.pages', '.numbers', '.key'
+        '.csv', '.txt', '.md', '.html', '.htm', '.rtf',
+        '.pages', '.numbers', '.key'
     }
     count = 0
     for root, dirs, files in os.walk(doc_root):
@@ -86,7 +107,9 @@ document_processing:
     - xls
     - csv
     - txt
+    - md
     - html
+    - htm
     - rtf
     - pages
     - numbers

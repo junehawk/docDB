@@ -19,6 +19,7 @@ document_processing:
     - txt
     - md
     - html
+    - htm
     - rtf
     - pages
     - numbers
