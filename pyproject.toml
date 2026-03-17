@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "docdb"
-version = "0.1.0"
+version = "0.5.0"
 description = "로컬 문서 벡터 검색 시스템 - MCP 서버를 통해 Claude에서 자연어 검색"
 readme = "README.md"
 requires-python = ">=3.10"
