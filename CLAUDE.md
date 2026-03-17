@@ -8,7 +8,7 @@
 **핵심 원칙**: API 키 없이 로컬만으로 완전 동작, 설정 최소화 (문서 폴더 경로만 지정)
 
 ## 핵심 컴포넌트
-- 문서 추출 파이프라인: 14개 포맷 지원 (HWP, PDF, DOCX, PPTX, XLSX, Pages 등)
+- 문서 추출 파이프라인: 16개 포맷 지원 (HWP, PDF, DOCX, PPTX, XLSX, Pages 등)
 - `DocumentProcessor`: 추출 → 청킹 파이프라인
 - `LocalEmbedder`: BAAI/bge-m3 로컬 임베딩 (API 키 불필요)
 - `ChromaManager`: ChromaDB 관리 (로컬 PersistentClient, 단일 `documents` 컬렉션)
@@ -22,7 +22,7 @@
 
 ```
 [사용자 PC의 문서 폴더] → [텍스트 추출] → [청킹] → [로컬 임베딩] → [ChromaDB (로컬)]
-     ~/Documents 등        14개 포맷     800자/100     bge-m3       data/chroma_db/
+     ~/Documents 등        16개 포맷     800자/100     bge-m3       data/chroma_db/
      어떤 구조든 OK                       오버랩     (API 키 불필요)      ↕
                                                                   [MCP Server]
                                                                       ↕
@@ -107,7 +107,7 @@ docdb/
 │   ├── config.py               # 설정 로더 (PROJECT_ROOT 기준 경로 해석)
 │   ├── indexing_pipeline.py    # 공통 인덱싱 파이프라인 (main.py, server.py 공유)
 │   ├── document_processor/
-│   │   ├── extractors/         # 14개 포맷 추출기 (그대로 유지)
+│   │   ├── extractors/         # 16개 포맷 추출기
 │   │   │   ├── base_extractor.py
 │   │   │   ├── hwp_extractor.py
 │   │   │   ├── pdf_extractor.py
@@ -200,7 +200,7 @@ kisti-vectordb → docDB 변환 완료 상태:
 21. [x] KoreanChunker 유지 확인
 22. [ ] 테스트 작성
 23. [x] 실제 문서로 인덱싱 → 검색 end-to-end 검증 (247파일, 236성공)
-24. [x] 코드 품질/보안/성능 리뷰 (4개 에이전트 + Codex 분석) → 20건 수정 완료
+24. [x] 코드 품질/보안/성능 리뷰 (4라운드 에이전트 + Codex + 아키텍트 Opus 검증) → 47건 수정 완료
 
 ### 버그 수정 이력 (리팩토링 후 발견/수정)
 - `chroma_manager.py`: `_sanitize_metadata()` 추가 — doc_properties nested dict → ChromaDB ValueError
@@ -212,24 +212,36 @@ kisti-vectordb → docDB 변환 완료 상태:
 - `src/__init__.py`: 모듈 레벨 loguru import 제거
 - `bm25_index.py`: 캐시 경로 `~/.docdb/` → `data/` (프로젝트 상대경로)
 
-### v0.2.0 코드 품질/보안 개선 (4개 에이전트 + Codex 분석 기반)
+### v0.2.0 코드 품질/보안 개선 (4라운드 에이전트 + Codex + 아키텍트 Opus 검증, 47건)
 - **C2**: `indexing_pipeline.py` 생성 — main.py/server.py의 중복 인덱싱 로직 통합
 - **C3**: `add_chunks()` 실패 시 tracker에 성공 기록 방지 (반환값 확인)
 - **C4**: full_index에서 stale 청크 정리 (`_cleanup_stale_chunks`)
 - **C5**: 변경 파일 처리 순서 개선 — upsert 후 stale 삭제 (데이터 소실 방지)
 - **C1**: BM25 캐시 pickle → JSON 전환 (임의 코드 실행 방지)
-- **H1**: `get_document` path traversal 방어 강화 (doc_root 빈값 시 거부)
-- **H2**: `defusedxml` 도입 — XXE/Billion Laughs 방어 (hwp, apple extractors)
+- **H1**: `get_document` path traversal 방어 강화 (doc_root 빈값 시 거부, NFC 정규화)
+- **H2**: `defusedxml` 도입 — XXE/Billion Laughs 방어 (hwp, apple extractors, fallback 경고)
 - **H3**: chunk ID 해시 MD5 8자 → SHA-256 12자 (충돌 확률 대폭 감소)
-- **H5**: XLS 헤더-값 매핑 버그 수정 (빈 셀 시 인덱스 불일치)
-- **H6**: asyncio.Lock lazy 초기화 → `_initialize_components`로 이동
-- **M1**: MCP 파라미터 bounds 검증 (n_results, chunk_offset, limit)
-- **M2**: `list_documents` unbounded query → limit 상한 설정
-- **M3**: `record_error()` TOCTOU race condition 수정 (단일 lock 범위)
+- **H5**: XLS + XLSX 헤더-값 매핑 버그 수정 (빈 셀 시 열 인덱스 추적)
+- **H6**: asyncio.Lock `_initialize_components`로 이동 + None guard
+- **M1**: MCP 파라미터 bounds 검증 (n_results, chunk_offset, chunk_limit, limit)
+- **M2**: `list_documents` unbounded query → limit 상한 설정 (MAX_FETCH)
+- **M3**: `record_error()` TOCTOU race condition 수정 (단일 lock 범위, is_indexed 체크)
 - **M4**: 서버 종료 시 SQLite 연결 정리 (`tracker.close()`)
 - **M5**: full_index 파일 스캔 rglob 10회 → 단일 순회
 - **M9**: CLI 증분 인덱싱 실패 기록 누락 수정 (공통 파이프라인에서 처리)
 - **M10**: 경로 NFC 정규화 통일 (macOS 한글 파일명 중복 방지)
-- **M8**: 설정 파일 regex 패턴 검증 (잘못된 패턴 시 경고 후 무시)
+- **M8**: 설정 파일 regex 패턴 검증 (잘못된 패턴 시 경고 후 무시, main.py + file_scanner.py)
 - **L1**: 미사용 `_chunk_text` 메서드 제거
 - **L2**: 루프 내 반복 해시 계산 → 루프 외 1회로 이동
+- TOCTOU mtime 수정: `index_single_file`에 mtime 파라미터 추가 (처리 전 1회 확정)
+- `_get_document`에서 resolved(NFC+realpath) 경로를 process_document에 전달
+- 에러 메시지 내부정보 노출 제거 (5개 핸들러 모두 제네릭 메시지)
+- CLI 모드 `IndexTracker` context manager 적용 (full_index, incremental, stats)
+- 지원 확장자 통일 (`FileScanner.SUPPORTED`를 기본값으로 사용)
+- XLSX 빈 워크시트 `max_row` 가드 추가
+- `_cleanup_stale_chunks` ChromaDB 페이지네이션 적용
+- BM25 IDs hash 수집 페이지네이션 적용
+- BM25 중복 `collection.count()` 제거, `_save_cache(len(all_ids))` 자체 일관성
+- `.md`, `.htm` 포맷 지원 추가 (총 16개 포맷)
+- 로그 `retention=5` 설정 (디스크 무한 누적 방지)
+- `_bm25_lock` `__init__`에서 None 초기화 (AttributeError 방지)

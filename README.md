@@ -22,7 +22,7 @@ Claude, ChatGPT, Cursor 등 **MCP를 지원하는 모든 AI 클라이언트**에
 
 ## 🔧 주요 기능
 
-- **14개 문서 포맷**: HWP, HWPX, PDF, DOCX, PPTX, XLSX, XLS, CSV, TXT, HTML, RTF, Pages, Numbers, Keynote
+- **16개 문서 포맷**: HWP, HWPX, PDF, DOCX, PPTX, XLSX, XLS, CSV, TXT, Markdown, HTML, HTM, RTF, Pages, Numbers, Keynote
 - **로컬 임베딩**: BAAI/bge-m3 (1024D) — API 키 불필요
 - **하이브리드 검색**: 벡터 유사도 + BM25 키워드 + Reranker
 - **증분 인덱싱**: 변경된 파일만 자동 감지 → 빠른 업데이트
@@ -48,7 +48,7 @@ Claude, ChatGPT, Cursor 등 **MCP를 지원하는 모든 AI 클라이언트**에
 │  │              docDB 인덱싱 파이프라인                    │       │
 │  │                                                      │       │
 │  │  📄 텍스트 추출 ──→ ✂️ 청킹 ──→ 🔢 임베딩 ──→ 💾 저장  │       │
-│  │  (14개 포맷)    (800자/100)  (bge-m3)    (ChromaDB)  │       │
+│  │  (16개 포맷)    (800자/100)  (bge-m3)    (ChromaDB)  │       │
 │  └──────────────────────────────────────────────────────┘       │
 │         │                                                       │
 │         ▼                                                       │
@@ -301,7 +301,7 @@ docdb/
 │   ├── config.py                # 설정 로더
 │   ├── indexing_pipeline.py     # 공통 인덱싱 파이프라인
 │   ├── document_processor/
-│   │   ├── extractors/          # 14개 포맷 추출기
+│   │   ├── extractors/          # 16개 포맷 추출기
 │   │   ├── chunking/            # 한국어 청킹
 │   │   ├── metadata_extractor.py # 4단계 메타데이터 추출
 │   │   └── processor.py         # 문서 처리 파이프라인
