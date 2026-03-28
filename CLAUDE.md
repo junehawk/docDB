@@ -86,6 +86,31 @@
 - `doc_type`: 문서 유형 (보고서, 계획서 등 - 1~2단계에서 추출 가능할 때)
 - `author`: 작성자 (1~2단계에서 추출 가능할 때)
 
+## Memory & Performance
+
+### 메모리 요구사항
+- **최소 8GB RAM** (16GB+ 권장)
+- 인덱싱 피크: ~3-5GB (임베딩 모델 2GB + 파이프라인 1-3GB)
+- MCP 서버 상주: ~2-3GB (임베딩 모델 + BM25 인덱스)
+
+### 메모리 최적화 (v0.6.0 적용)
+코드 전반에 메모리 최적화가 적용되어 있으며, 수정 시 아래 패턴을 유지해야 함:
+
+1. **MPS watermark**: `main.py`/`server.py` 최상단에 `os.environ.setdefault('PYTORCH_MPS_HIGH_WATERMARK_RATIO', '0.0')` — torch import 전에 설정 필수
+2. **GC 순서**: `_clear_device_cache()`에서 반드시 `gc.collect()` → `torch.mps.synchronize()` → `torch.mps.empty_cache()` 순서
+3. **numpy 반환**: `embed()`/`embed_batch()`는 `.tolist()` 하지 않고 numpy 반환 — `.tolist()`는 7배 메모리 증가
+4. **numpy truthiness 주의**: numpy 배열에 `if not array:` 사용 금지 → `if array is None:` 또는 `len(array) == 0` 사용
+5. **스트리밍 서브배치**: `indexing_pipeline.py`에서 전체 청크를 한번에 embed하지 않고 batch_size 단위로 embed→store 반복
+6. **추출기 버퍼**: 추출기에서 중간 버퍼(`stream_data`, `xml_content`, `page_text`)는 사용 후 즉시 `del`
+7. **주기적 unload**: 인덱싱 루프에서 200파일마다 `emb_manager.unload_model()` 호출 (MPS 단편화 방지)
+8. **OCR 페이지별**: `convert_from_path()`는 반드시 `first_page=N, last_page=N`으로 한 페이지씩 처리
+
+### 주의: 메모리 관련 코드 수정 시
+- `not embedding` / `not embeddings` 같은 truthiness 체크를 numpy 배열에 사용하면 런타임 에러 발생
+- ChromaDB `upsert()`는 numpy 배열을 네이티브로 수용 — `.tolist()` 변환 불필요
+- `openpyxl.load_workbook()`은 반드시 `read_only=True` 사용 (대용량 XLSX 메모리 폭주 방지)
+- `pdfplumber` 페이지 루프에서 `page.flush_cache()` 필수 (캐시 누적 방지)
+
 ## Project Structure
 
 ```
