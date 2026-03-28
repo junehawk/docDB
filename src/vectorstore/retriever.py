@@ -75,7 +75,7 @@ class Retriever:
             embedding = self._embed_query(query)
             t1 = _time.monotonic()
             logger.info(f"[타이밍] 쿼리 임베딩: {t1 - t0:.2f}초")
-            if not embedding:
+            if embedding is None:
                 logger.warning(f"쿼리 임베딩 실패: {query}")
                 return []
 

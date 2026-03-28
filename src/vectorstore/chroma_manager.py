@@ -64,7 +64,7 @@ class ChromaManager:
             성공 여부
         """
         try:
-            if not chunks or not embeddings:
+            if not chunks or (hasattr(embeddings, '__len__') and len(embeddings) == 0):
                 logger.warning("빈 청크 또는 임베딩 리스트")
                 return False
 
