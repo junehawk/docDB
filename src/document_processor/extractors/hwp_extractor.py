@@ -169,6 +169,7 @@ class HWPExtractor(BaseExtractor):
 
                             if decompressed:
                                 data = decompressed
+                                del stream_data
                             else:
                                 logger.debug(
                                     f"zlib decompression failed for {entry_name}, "
@@ -420,6 +421,7 @@ class HWPExtractor(BaseExtractor):
                     try:
                         xml_content = zf.read(xml_file).decode("utf-8")
                         root = ET.fromstring(xml_content)
+                        del xml_content  # XML 문자열 즉시 해제
 
                         # 모든 텍스트 노드를 추출합니다
                         text = self._extract_text_from_xml(root)
@@ -647,12 +649,12 @@ class HWPExtractor(BaseExtractor):
 
         Args:
             element: XML 요소
-            depth: 현재 재귀 깊이 (최대 100)
+            depth: 현재 재귀 깊이 (최대 20)
 
         Returns:
             str: 추출된 텍스트
         """
-        if depth > 100:
+        if depth > 20:
             return ''
 
         text_parts = []

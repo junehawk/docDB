@@ -1,7 +1,7 @@
 """
 ChromaDB 벡터 스토어 관리 - 단일 컬렉션 (documents)
 """
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union
 import chromadb
 from loguru import logger
 
@@ -41,7 +41,7 @@ class ChromaManager:
     def add_chunks(
         self,
         chunks: List[Dict],
-        embeddings: List[List[float]],
+        embeddings: Union[List[List[float]], 'np.ndarray'],
     ) -> bool:
         """
         여러 청크를 컬렉션에 추가

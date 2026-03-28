@@ -10,6 +10,7 @@
 - M9: CLI 증분 인덱싱 실패 미기록
 - M10: 경로 NFC 정규화 불일치
 """
+import gc
 import hashlib
 import unicodedata
 from pathlib import Path
@@ -77,12 +78,12 @@ def index_single_file(
             tracker.record_error(str_path, "추출 실패 또는 빈 결과")
             return {'success': False, 'chunks': 0, 'error': '추출 실패'}
 
-        # 2. 메타데이터 추출
-        extracted_text = "\n".join(chunk['text'] for chunk in chunks)
+        # 2. 메타데이터 추출 (첫 청크 텍스트만 사용 — meta_extractor는 최대 1000자만 참조)
+        first_text = chunks[0]['text'] if chunks else ''
         doc_properties = chunks[0].get('metadata', {}).get('doc_properties', {})
         file_meta = meta_extractor.extract(
             str_path,
-            extracted_text=extracted_text,
+            extracted_text=first_text,
             doc_properties=doc_properties,
         )
 
@@ -107,28 +108,48 @@ def index_single_file(
             tracker.record_error(str_path, "유효한 텍스트 청크 없음")
             return {'success': False, 'chunks': 0, 'error': '유효한 텍스트 없음'}
 
-        texts = [chunk['text'] for chunk in valid_chunks]
-        embeddings = emb_manager.embed_batch(texts, batch_size=batch_size)
+        # Stale 정리용 ID 사전 추출 후 chunks 해제
+        new_ids = {c['chunk_id'] for c in valid_chunks} if is_changed else None
+        del chunks  # valid_chunks만 유지하여 메모리 절감
 
-        # 5. ChromaDB 저장 (C3: 실패 시 에러 기록, 성공으로 표시하지 않음)
-        chroma_chunks = [
-            {'id': chunk['chunk_id'], 'text': chunk['text'], 'metadata': chunk['metadata']}
-            for chunk in valid_chunks
-        ]
-        if not chroma.add_chunks(chroma_chunks, embeddings):
+        # 5. 스트리밍 서브배치 임베딩 + ChromaDB 저장 (C3: 실패 시 에러 기록)
+        store_failed = False
+        file_chunk_count = 0
+
+        try:
+            for batch_start in range(0, len(valid_chunks), batch_size):
+                batch_chunks = valid_chunks[batch_start:batch_start + batch_size]
+
+                batch_texts = [c['text'] for c in batch_chunks]
+                batch_embeddings = emb_manager.embed_batch(batch_texts, batch_size=batch_size)
+
+                batch_chroma = [
+                    {'id': c['chunk_id'], 'text': c['text'], 'metadata': c['metadata']}
+                    for c in batch_chunks
+                ]
+                if not chroma.add_chunks(batch_chroma, batch_embeddings):
+                    store_failed = True
+                    break
+
+                file_chunk_count += len(batch_chunks)
+                del batch_texts, batch_embeddings, batch_chroma
+        finally:
+            del valid_chunks
+            gc.collect()
+
+        if store_failed:
             tracker.record_error(str_path, "ChromaDB 저장 실패")
             return {'success': False, 'chunks': 0, 'error': 'ChromaDB 저장 실패'}
 
         # 6. Stale 청크 정리 (C4/C5: upsert 후 남은 기존 청크 삭제)
-        if is_changed:
-            new_ids = {chunk['chunk_id'] for chunk in valid_chunks}
+        if is_changed and new_ids:
             _cleanup_stale_chunks(chroma, str_path, new_ids)
 
         # 7. 추적 DB 업데이트 (mtime은 함수 시작 시 확정된 값 사용)
         mtime_hash = compute_mtime_hash(str_path, mtime)
         tracker.mark_indexed(str_path, mtime, mtime_hash)
 
-        return {'success': True, 'chunks': len(valid_chunks), 'error': None}
+        return {'success': True, 'chunks': file_chunk_count, 'error': None}
 
     except Exception as e:
         logger.warning(f"파일 인덱싱 실패: {str_path}: {e}")

@@ -3,7 +3,9 @@ docDB - 메인 엔트리포인트
 """
 import argparse
 import asyncio
+import gc
 import os
+os.environ.setdefault('PYTORCH_MPS_HIGH_WATERMARK_RATIO', '0.0')
 import re
 import sys
 import time
@@ -164,6 +166,7 @@ def run_full_index(config_path: Optional[str] = None):
             total_chunks = 0
             batch_size = emb_config.get('batch_size', 32)
             start_time = time.time()
+            _files_since_unload = 0
 
             for file_path in tqdm(target_files, desc="인덱싱"):
                 str_path = normalize_path(file_path)
@@ -193,6 +196,13 @@ def run_full_index(config_path: Optional[str] = None):
                     total_chunks += result['chunks']
                 else:
                     fail_count += 1
+
+                _files_since_unload += 1
+                if _files_since_unload >= 200 and emb_manager.local_embedder.is_loaded:
+                    logger.info("주기적 모델 언로드 (MPS 단편화 방지)")
+                    emb_manager.unload_model()
+                    gc.collect()
+                    _files_since_unload = 0
 
             elapsed = time.time() - start_time
 
@@ -286,6 +296,7 @@ def run_incremental_index(config_path: Optional[str] = None):
             batch_size = emb_config.get('batch_size', 32)
             success = 0
             fail = 0
+            _files_since_unload = 0
 
             for file_path in process_files:
                 result = index_single_file(
@@ -297,6 +308,13 @@ def run_incremental_index(config_path: Optional[str] = None):
                     success += 1
                 else:
                     fail += 1
+
+                _files_since_unload += 1
+                if _files_since_unload >= 200 and emb_manager.local_embedder.is_loaded:
+                    logger.info("주기적 모델 언로드 (MPS 단편화 방지)")
+                    emb_manager.unload_model()
+                    gc.collect()
+                    _files_since_unload = 0
 
             logger.info(
                 f"증분 인덱싱 완료: 성공 {success}, "

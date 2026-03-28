@@ -115,6 +115,7 @@ class PDFExtractor(BaseExtractor):
 
             with pdfplumber.open(str(self.file_path)) as pdf:
                 for page_num, page in enumerate(pdf.pages, 1):
+                    page_text = None
                     try:
                         page_text = page.extract_text()
                         if page_text:
@@ -122,7 +123,10 @@ class PDFExtractor(BaseExtractor):
                             page_count += 1
                     except Exception as e:
                         logger.debug(f"Failed to extract page {page_num}: {e}")
-                        continue
+                    finally:
+                        if hasattr(page, 'flush_cache'):
+                            page.flush_cache()
+                        page_text = None
 
             if text_parts:
                 # 페이지 구분선으로 연결합니다

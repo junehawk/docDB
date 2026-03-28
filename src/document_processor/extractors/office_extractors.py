@@ -300,50 +300,55 @@ class XlsxExtractor(BaseExtractor):
             return self._create_error_result("openpyxl not installed")
 
         try:
-            workbook = load_workbook(str(self.file_path), data_only=True)
-            text_parts = []
-            sheets_processed = 0
-
-            # 문서 내장 properties 추출
-            doc_properties = {}
+            workbook = None
             try:
-                props = workbook.properties
-                doc_properties = {
-                    'title': props.title or '',
-                    'creator': props.creator or '',
-                    'subject': props.subject or '',
-                    'keywords': props.keywords or '',
-                    'created': props.created.isoformat() if props.created else '',
-                    'modified': props.modified.isoformat() if props.modified else '',
-                }
-            except Exception:
+                workbook = load_workbook(str(self.file_path), data_only=True, read_only=True)
+                text_parts = []
+                sheets_processed = 0
+
+                # 문서 내장 properties 추출
                 doc_properties = {}
-
-            for sheet_name in workbook.sheetnames:
                 try:
-                    ws = workbook[sheet_name]
-                    sheet_text = self._extract_sheet_text(ws)
-
-                    if sheet_text:
-                        text_parts.append(f"\n[Sheet: {sheet_name}]\n{sheet_text}")
-                        sheets_processed += 1
-                except Exception as e:
-                    logger.debug(f"Failed to process sheet '{sheet_name}': {e}")
-                    continue
-
-            if text_parts:
-                text = "\n".join(text_parts)
-                return self._create_success_result(
-                    text, {
-                        "method": "openpyxl",
-                        "sheets_processed": sheets_processed,
-                        "total_sheets": len(workbook.sheetnames),
-                        "max_rows_per_sheet": self.MAX_ROWS_PER_SHEET,
-                        "doc_properties": doc_properties,
+                    props = workbook.properties
+                    doc_properties = {
+                        'title': props.title or '',
+                        'creator': props.creator or '',
+                        'subject': props.subject or '',
+                        'keywords': props.keywords or '',
+                        'created': props.created.isoformat() if props.created else '',
+                        'modified': props.modified.isoformat() if props.modified else '',
                     }
-                )
-            else:
-                return self._create_error_result("No data found in XLSX")
+                except Exception:
+                    doc_properties = {}
+
+                for sheet_name in workbook.sheetnames:
+                    try:
+                        ws = workbook[sheet_name]
+                        sheet_text = self._extract_sheet_text(ws)
+
+                        if sheet_text:
+                            text_parts.append(f"\n[Sheet: {sheet_name}]\n{sheet_text}")
+                            sheets_processed += 1
+                    except Exception as e:
+                        logger.debug(f"Failed to process sheet '{sheet_name}': {e}")
+                        continue
+
+                if text_parts:
+                    text = "\n".join(text_parts)
+                    return self._create_success_result(
+                        text, {
+                            "method": "openpyxl",
+                            "sheets_processed": sheets_processed,
+                            "total_sheets": len(workbook.sheetnames),
+                            "max_rows_per_sheet": self.MAX_ROWS_PER_SHEET,
+                            "doc_properties": doc_properties,
+                        }
+                    )
+                else:
+                    return self._create_error_result("No data found in XLSX")
+            finally:
+                if workbook is not None:
+                    workbook.close()
 
         except Exception as e:
             logger.error(f"XLSX extraction failed: {e}")
@@ -366,8 +371,9 @@ class XlsxExtractor(BaseExtractor):
             return ""
 
         headers = []
-        for cell in worksheet[1]:
-            headers.append(str(cell.value) if cell.value is not None else "")
+        for row in worksheet.iter_rows(min_row=1, max_row=1):
+            for cell in row:
+                headers.append(str(cell.value) if cell.value is not None else "")
         if any(headers):
             sheet_rows.append("Headers: " + ", ".join(headers))
 

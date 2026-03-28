@@ -58,7 +58,21 @@ class LocalEmbedder:
             logger.error(f"Failed to load model {self.model_name}: {e}")
             raise
 
-    def embed(self, text: str) -> List[float]:
+    def _clear_device_cache(self):
+        """GPU/MPS 메모리 캐시 해제 (GC → sync → empty_cache 순서 중요)"""
+        import gc
+        gc.collect()  # ① Python 참조 해제 → 텐서 참조 끊기
+        try:
+            import torch
+            if self.device == 'mps' and hasattr(torch, 'mps'):
+                torch.mps.synchronize()   # ② GPU 작업 완료 대기
+                torch.mps.empty_cache()   # ③ 해제 가능한 블록 반환
+            elif self.device == 'cuda' and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception as e:
+            logger.debug(f"Device cache clear failed: {e}")
+
+    def embed(self, text: str):
         """
         단일 텍스트를 임베딩
 
@@ -87,14 +101,14 @@ class LocalEmbedder:
 
         try:
             embedding = self._model.encode(text, convert_to_numpy=True)
-            return embedding.tolist()
+            return embedding
         except Exception as e:
             logger.error(f"Error embedding text: {e}")
             raise
 
     def embed_batch(
         self, texts: List[str], batch_size: int = 32, show_progress: bool = True
-    ) -> List[List[float]]:
+    ) -> 'np.ndarray':
         """
         여러 텍스트를 배치로 임베딩
 
@@ -104,7 +118,7 @@ class LocalEmbedder:
             show_progress: 진행바 표시 여부
 
         Returns:
-            임베딩 벡터 리스트 (각 텍스트에 대해 float 리스트)
+            numpy.ndarray, shape (len(texts), dim), dtype float32
 
         Raises:
             ValueError: 텍스트 리스트가 비어있거나 유효하지 않은 경우
@@ -114,19 +128,28 @@ class LocalEmbedder:
             logger.warning(f"Invalid texts input: {type(texts)}")
             raise ValueError("Texts must be a non-empty list of strings")
 
-        if self._model is None:
+        if not self.is_loaded:
             self._load_model()
+
+        import numpy as np
+        dim = self.dimension
+        result = np.empty((len(texts), dim), dtype=np.float32)
 
         try:
             logger.info(f"Embedding {len(texts)} texts in batches of {batch_size}")
-            embeddings = self._model.encode(
-                texts,
-                batch_size=batch_size,
-                show_progress_bar=show_progress,
-                convert_to_numpy=True,
-            )
+            for i in range(0, len(texts), batch_size):
+                sub_texts = texts[i:i + batch_size]
+                sub_emb = self._model.encode(
+                    sub_texts,
+                    batch_size=batch_size,
+                    show_progress_bar=show_progress and i == 0,
+                    convert_to_numpy=True,
+                )
+                result[i:i + len(sub_texts)] = sub_emb
+                del sub_emb
+                self._clear_device_cache()
             logger.info(f"Successfully embedded {len(texts)} texts")
-            return embeddings.tolist()
+            return result
         except Exception as e:
             logger.error(f"Error in batch embedding: {e}")
             raise
@@ -159,4 +182,5 @@ class LocalEmbedder:
         if self._model is not None:
             del self._model
             self._model = None
+            self._clear_device_cache()
             logger.info("Model unloaded from memory")

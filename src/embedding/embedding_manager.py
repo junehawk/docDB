@@ -3,6 +3,7 @@
 로컬 모델만을 사용한 단순화된 임베딩 처리
 """
 from typing import Dict, List
+import numpy as np
 from loguru import logger
 
 from .local_embedder import LocalEmbedder
@@ -72,7 +73,7 @@ class EmbeddingManager:
             logger.error(f"Failed to initialize LocalEmbedder: {e}")
             raise ValueError(f"Embedding backend initialization failed: {e}") from e
 
-    def embed_batch(self, texts: List[str], batch_size: int = 64) -> List[List[float]]:
+    def embed_batch(self, texts: List[str], batch_size: int = 64) -> np.ndarray:
         """
         여러 텍스트를 배치로 임베딩
 
@@ -81,7 +82,7 @@ class EmbeddingManager:
             batch_size: 배치 크기 (기본 64)
 
         Returns:
-            임베딩 벡터 리스트
+            numpy.ndarray, shape (len(texts), dim), dtype float32
 
         Raises:
             ValueError: 텍스트 리스트가 비어있는 경우
@@ -104,22 +105,25 @@ class EmbeddingManager:
         valid_texts = [t for t in cleaned if t is not None]
         if not valid_texts:
             dim = self.local_embedder.dimension
-            return [[0.0] * dim for _ in texts]
+            return np.zeros((len(texts), dim), dtype=np.float32)
 
         valid_embeddings = self.local_embedder.embed_batch(valid_texts, batch_size=batch_size, show_progress=False)
 
+        # 모든 텍스트가 유효하면 바로 반환
+        if len(valid_texts) == len(texts):
+            return valid_embeddings
+
         # 원래 순서 복원: None 위치에 제로 벡터 삽입
-        dim = len(valid_embeddings[0])
-        result = []
-        valid_iter = iter(valid_embeddings)
-        for t in cleaned:
-            if t is None:
-                result.append([0.0] * dim)
-            else:
-                result.append(next(valid_iter))
+        dim = valid_embeddings.shape[1]
+        result = np.zeros((len(texts), dim), dtype=np.float32)
+        valid_idx = 0
+        for i, t in enumerate(cleaned):
+            if t is not None:
+                result[i] = valid_embeddings[valid_idx]
+                valid_idx += 1
         return result
 
-    def embed_text(self, text: str) -> List[float]:
+    def embed_text(self, text: str):
         """
         단일 텍스트를 임베딩
 
@@ -139,7 +143,7 @@ class EmbeddingManager:
         logger.debug(f"Embedded text (dim={len(embedding)})")
         return embedding
 
-    def embed_query(self, query: str) -> List[float]:
+    def embed_query(self, query: str):
         """
         쿼리 텍스트를 임베딩
 
@@ -168,6 +172,11 @@ class EmbeddingManager:
     def is_loaded(self) -> bool:
         """임베딩 모델이 로드되었는지 확인"""
         return self.local_embedder.is_loaded
+
+    def unload_model(self):
+        """주기적 메모리 해제를 위해 임베딩 모델 언로드"""
+        if self.local_embedder is not None:
+            self.local_embedder.unload_model()
 
     def get_embedding_info(self) -> Dict:
         """

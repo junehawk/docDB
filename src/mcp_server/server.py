@@ -1,6 +1,8 @@
 """
 docDB MCP 서버
 """
+import os
+os.environ.setdefault('PYTORCH_MPS_HIGH_WATERMARK_RATIO', '0.0')
 import asyncio
 import json
 from typing import Optional, Dict, Any
@@ -424,7 +426,11 @@ class DocDBServer:
             chunk_limit = max(1, min(int(arguments.get('chunk_limit', 50)), 50))
 
             total_chunks = len(chunks)
+            total_characters = sum(len(c['text']) for c in chunks)
+            file_name = chunks[0].get('metadata', {}).get('file_name', '')
             page_chunks = chunks[chunk_offset:chunk_offset + chunk_limit]
+            del chunks  # 전체 청크 리스트 해제 — page_chunks만 유지
+
             full_text = "\n".join(chunk['text'] for chunk in page_chunks)
             has_more = (chunk_offset + chunk_limit) < total_chunks
 
@@ -432,9 +438,9 @@ class DocDBServer:
                 type="text",
                 text=json.dumps({
                     "file_path": file_path,
-                    "file_name": chunks[0].get('metadata', {}).get('file_name', ''),
+                    "file_name": file_name,
                     "total_chunks": total_chunks,
-                    "total_characters": sum(len(c['text']) for c in chunks),
+                    "total_characters": total_characters,
                     "returned_chunks": len(page_chunks),
                     "chunk_offset": chunk_offset,
                     "chunk_limit": chunk_limit,
@@ -564,12 +570,15 @@ class DocDBServer:
                 success = 0
                 fail = 0
                 total_chunks = 0
+                import gc as _gc
+                _files_since_unload = 0
 
+                batch_size = self.config.get('embedding', {}).get('batch_size', 32)
                 for file_path in process_files:
                     result = index_single_file(
                         file_path, self.processor, self.meta_extractor,
                         self.embedding_manager, self.chroma_manager, self.tracker,
-                        self.config, batch_size=64,
+                        self.config, batch_size=batch_size,
                         is_changed=(file_path in changed_set),
                     )
                     if result['success']:
@@ -577,6 +586,13 @@ class DocDBServer:
                         total_chunks += result['chunks']
                     else:
                         fail += 1
+
+                    _files_since_unload += 1
+                    if _files_since_unload >= 200 and self.embedding_manager.local_embedder.is_loaded:
+                        logger.info("주기적 모델 언로드 (MPS 단편화 방지)")
+                        self.embedding_manager.unload_model()
+                        _gc.collect()
+                        _files_since_unload = 0
 
                 elapsed = time.time() - start_time
 

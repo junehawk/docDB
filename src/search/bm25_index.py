@@ -86,6 +86,7 @@ class BM25Index:
                 break
 
         ids_hash = self._compute_ids_hash(all_ids_for_hash)
+        del all_ids_for_hash  # 해시 계산 후 트랜지언트 리스트 즉시 해제
 
         # 캐시에서 로드 시도 (count + ids_hash 검증)
         if self._load_cache(total_count, expected_ids_hash=ids_hash):
@@ -111,7 +112,8 @@ class BM25Index:
 
         if all_ids:
             self.build(all_ids, all_texts)
-            self._save_cache(len(all_ids))
+            del all_ids, all_texts  # 트랜지언트 원본 리스트 즉시 해제 (build()가 내부에 복사본 보관)
+            self._save_cache(len(self.chunk_ids))
             elapsed = time.time() - start
             logger.info(f"BM25 캐시 저장 완료 ({self._cache_path}, {elapsed:.1f}초)")
 
@@ -145,9 +147,11 @@ class BM25Index:
 
             self.chunk_ids = cache['chunk_ids']
             self._texts = cache['texts']
+            cached_count = cache['count']
+            del cache  # 파싱된 JSON dict 즉시 해제 (chunk_ids/texts는 이미 self에 이전됨)
 
             # 무결성 검증: 캐시 데이터 일관성 확인
-            if len(self.chunk_ids) != len(self._texts) or len(self.chunk_ids) != cache['count']:
+            if len(self.chunk_ids) != len(self._texts) or len(self.chunk_ids) != cached_count:
                 logger.warning("BM25 캐시 무결성 오류 — 데이터 길이 불일치")
                 return False
 

@@ -155,7 +155,7 @@ class IndexTracker:
                 cursor.execute("SELECT file_path, file_mtime, content_hash FROM indexed_files")
 
                 tracked = {}
-                for row in cursor.fetchall():
+                for row in cursor:
                     tracked[row['file_path']] = (row['file_mtime'], row['content_hash'])
 
             logger.info(f"추적 중인 파일 수: {len(tracked)}")
@@ -273,7 +273,7 @@ class IndexTracker:
                     "SELECT file_path, file_mtime, last_indexed "
                     "FROM indexed_files WHERE is_indexed = 1"
                 )
-                result = [dict(row) for row in cursor.fetchall()]
+                result = [dict(row) for row in cursor]
             return result
         except Exception as e:
             logger.error(f"인덱싱 파일 목록 조회 실패: {e}")
