@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Dict, Optional
 
 from loguru import logger
+from src.compat import IS_MACOS
 
 
 class MetadataExtractor:
@@ -241,7 +242,8 @@ class MetadataExtractor:
 
     def _from_path(self, file_path: str) -> Dict:
         """경로에서 파일명, 확장자, 상대경로 추출"""
-        file_path = unicodedata.normalize('NFC', file_path)
+        if IS_MACOS:
+            file_path = unicodedata.normalize('NFC', file_path)
         result = {}
 
         basename = os.path.basename(file_path)
@@ -252,12 +254,14 @@ class MetadataExtractor:
 
         # doc_root 기준 상대 경로
         if self.doc_root:
-            doc_root = unicodedata.normalize('NFC', str(self.doc_root).rstrip(os.sep))
+            doc_root = os.path.normpath(str(self.doc_root))
+            if IS_MACOS:
+                doc_root = unicodedata.normalize('NFC', doc_root)
             try:
                 result['relative_path'] = os.path.relpath(file_path, doc_root)
             except ValueError:
-                # Windows에서 드라이브가 다른 경우 등
-                result['relative_path'] = file_path
+                # Windows 크로스 드라이브 등
+                result['relative_path'] = os.path.basename(file_path)
         else:
             result['relative_path'] = file_path
 

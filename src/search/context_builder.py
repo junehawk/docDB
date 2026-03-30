@@ -2,6 +2,7 @@
 메타데이터 기반 Context 접두사 생성기
 청크 텍스트 앞에 붙여 임베딩 품질 향상
 """
+import os
 from loguru import logger
 
 
@@ -43,7 +44,7 @@ def build_context_prefix(metadata: dict) -> str:
     if not parts and metadata.get('relative_path'):
         # 메타데이터가 전혀 없으면 상대경로 사용
         rel = metadata['relative_path']
-        parent = '/'.join(rel.split('/')[:-1])  # 파일명 제외한 경로
+        parent = os.path.dirname(rel)
         if parent:
             parts.append(parent)
 

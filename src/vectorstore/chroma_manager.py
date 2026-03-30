@@ -20,7 +20,7 @@ class ChromaManager:
         """
         import os
         try:
-            self.persist_dir = os.path.expanduser(persist_dir)
+            self.persist_dir = os.path.normpath(os.path.expanduser(persist_dir))
             self.client = chromadb.PersistentClient(path=self.persist_dir)
 
             # 단일 컬렉션 생성 또는 가져오기 (cosine 거리 사용)

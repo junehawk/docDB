@@ -404,11 +404,10 @@ class DocDBServer:
             if not doc_root:
                 return self._error_response("doc_root가 설정되지 않았습니다. 파일 접근이 거부되었습니다.")
 
-            import unicodedata
+            from src.compat import path_is_under, safe_realpath
             file_path = os.path.expanduser(file_path)
-            resolved = unicodedata.normalize('NFC', os.path.realpath(file_path))
-            root_resolved = unicodedata.normalize('NFC', os.path.realpath(os.path.expanduser(doc_root)))
-            if not resolved.startswith(root_resolved + os.sep) and resolved != root_resolved:
+            resolved = safe_realpath(file_path)
+            if not path_is_under(resolved, os.path.expanduser(doc_root)):
                 logger.warning(f"Path traversal 차단: {file_path} (doc_root: {doc_root})")
                 return self._error_response("허용되지 않은 경로입니다")
 

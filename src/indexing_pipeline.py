@@ -12,15 +12,15 @@
 """
 import gc
 import hashlib
-import unicodedata
 from pathlib import Path
 from typing import Dict, Any, Set
 from loguru import logger
+from src.compat import normalize_path as _platform_normalize
 
 
 def normalize_path(file_path) -> str:
-    """macOS NFC 정규화된 경로 반환 (NFD/NFC 불일치 방지)"""
-    return unicodedata.normalize('NFC', str(file_path))
+    """플랫폼 인식 경로 정규화 (macOS NFC, Windows 패스스루)"""
+    return _platform_normalize(file_path)
 
 
 def compute_mtime_hash(file_path: str, mtime: float) -> str:

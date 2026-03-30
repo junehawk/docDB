@@ -3,6 +3,7 @@ docDB 공통 설정 로더
 main.py와 MCP 서버에서 공유하는 설정 로딩 로직
 """
 import os
+import sys
 from typing import Optional, Dict
 from loguru import logger
 
@@ -12,10 +13,15 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def _resolve_path(path: str) -> str:
     """경로 확장: ~ → 홈, 상대경로 → 프로젝트 루트 기준 절대경로"""
-    path = os.path.expanduser(path)
+    if path.startswith('~'):
+        if sys.platform == 'win32' and 'USERPROFILE' in os.environ:
+            home = os.environ['USERPROFILE']
+            path = os.path.join(home, path[2:])  # ~/ or ~\ 이후 부분
+        else:
+            path = os.path.expanduser(path)
     if not os.path.isabs(path):
         path = os.path.join(PROJECT_ROOT, path)
-    return path
+    return os.path.normpath(path)
 
 
 def load_config(config_path: Optional[str] = None) -> Dict:
