@@ -451,19 +451,26 @@ class HWPExtractor(BaseExtractor):
         Returns:
             ExtractionResult: 추출 결과
         """
-        try:
-            import tempfile
-            import os
-        except ImportError:
-            return self._create_error_result("tempfile module not available")
+        import tempfile
+        import sys as _sys
+        from src.compat import find_executable, get_subprocess_kwargs
+
+        lo_cmd = find_executable(['libreoffice', 'soffice'])
+        if not lo_cmd:
+            return self._create_error_result("LibreOffice not found in PATH")
 
         try:
+            # Python 3.12+ TemporaryDirectory cleanup error handling
+            td_kwargs = {}
+            if _sys.version_info >= (3, 12):
+                td_kwargs['ignore_cleanup_errors'] = True
+
             # 임시 디렉토리에 TXT 파일로 변환합니다
-            with tempfile.TemporaryDirectory() as tmpdir:
+            with tempfile.TemporaryDirectory(**td_kwargs) as tmpdir:
                 output_path = Path(tmpdir) / (self.file_path.stem + ".txt")
 
                 cmd = [
-                    "libreoffice",
+                    lo_cmd,
                     "--headless",
                     "--convert-to", "txt:Text - txt - csv (StarCalc):44,34,76,1,,1033,true,true,true,false,false",
                     "--outdir", tmpdir,
@@ -475,7 +482,8 @@ class HWPExtractor(BaseExtractor):
                         cmd,
                         capture_output=True,
                         timeout=self.timeout,
-                        text=True
+                        text=True,
+                        **get_subprocess_kwargs()
                     )
 
                     if result.returncode == 0 and output_path.exists():

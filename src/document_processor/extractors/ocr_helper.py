@@ -61,15 +61,24 @@ class OCRHelper:
         if self._tesseract_available is not None:
             return self._tesseract_available
 
+        from src.compat import find_executable, get_subprocess_kwargs
+
+        tesseract_cmd = find_executable(['tesseract'])
+        if not tesseract_cmd:
+            self._tesseract_available = False
+            logger.debug("Tesseract OCR 미설치 (Windows: choco install tesseract 또는 https://github.com/UB-Mannheim/tesseract/wiki)")
+            return False
+
         try:
             result = subprocess.run(
-                ['tesseract', '--version'],
-                capture_output=True, timeout=5
+                [tesseract_cmd, '--version'],
+                capture_output=True, timeout=5,
+                **get_subprocess_kwargs()
             )
             self._tesseract_available = (result.returncode == 0)
         except (FileNotFoundError, subprocess.TimeoutExpired):
             self._tesseract_available = False
-            logger.debug("Tesseract OCR 미설치")
+            logger.debug("Tesseract OCR 실행 실패")
 
         return self._tesseract_available
 
