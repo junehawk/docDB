@@ -2,7 +2,9 @@
 docDB MCP 서버
 """
 import os
-os.environ.setdefault('PYTORCH_MPS_HIGH_WATERMARK_RATIO', '0.0')
+import sys
+from src.compat import setup_mps_env, should_unload_model, setup_asyncio_policy
+setup_mps_env()
 import asyncio
 import json
 from typing import Optional, Dict, Any
@@ -100,6 +102,8 @@ class DocDBServer:
 
             # 인덱싱 추적 + 파일 스캐너
             self.tracker = IndexTracker(db_path=tracker_db)
+            import atexit
+            atexit.register(lambda: self.tracker.close() if self.tracker else None)
 
             excluded = self.config.get('excluded_patterns', [])
             self.file_scanner = FileScanner(
@@ -588,7 +592,9 @@ class DocDBServer:
                         fail += 1
 
                     _files_since_unload += 1
-                    if _files_since_unload >= 200 and self.embedding_manager.local_embedder.is_loaded:
+                    if (should_unload_model(self.embedding_manager.device)
+                            and _files_since_unload >= 200
+                            and self.embedding_manager.local_embedder.is_loaded):
                         logger.info("주기적 모델 언로드 (MPS 단편화 방지)")
                         self.embedding_manager.unload_model()
                         _gc.collect()
@@ -693,6 +699,7 @@ async def main(config_path: Optional[str] = None):
 
 
 if __name__ == "__main__":
+    setup_asyncio_policy()
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

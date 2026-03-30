@@ -5,13 +5,17 @@ import argparse
 import asyncio
 import gc
 import os
-os.environ.setdefault('PYTORCH_MPS_HIGH_WATERMARK_RATIO', '0.0')
 import re
 import sys
 import time
 from pathlib import Path
 from typing import Optional, Dict
 from loguru import logger
+from src.compat import (
+    setup_mps_env, setup_console_encoding, setup_asyncio_policy,
+    should_unload_model,
+)
+setup_mps_env()
 from src.config import load_config as _load_config
 from src.indexing_pipeline import index_single_file, normalize_path, compute_mtime_hash
 
@@ -25,7 +29,8 @@ def _setup_logger():
     logger.add(
         sys.stderr,
         format="<level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
-        level="INFO"
+        level="INFO",
+        colorize=None,  # auto-detect (Windows legacy 터미널 대응)
     )
     logger.add(
         os.path.join(log_dir, "docdb.log"),
@@ -56,6 +61,7 @@ def run_mcp_server(config_path: Optional[str] = None):
     try:
         from src.mcp_server.server import main
         logger.info("MCP 서버 모드 시작 (stdio 전송)")
+        setup_asyncio_policy()
         asyncio.run(main(config_path))
     except ImportError as e:
         logger.error(f"MCP 라이브러리 임포트 실패: {e}")
@@ -86,7 +92,8 @@ def run_full_index(config_path: Optional[str] = None):
         # 기본 doc_root 경고 (setup.py 없이 실행한 경우)
         expanded_root = os.path.expanduser(doc_root)
         default_docs = os.path.expanduser('~/Documents')
-        if os.path.realpath(expanded_root) == os.path.realpath(default_docs):
+        from src.compat import safe_realpath
+        if safe_realpath(expanded_root) == safe_realpath(default_docs):
             print("\n  [주의] doc_root가 기본값(~/Documents)으로 설정되어 있습니다.")
             print("  전체 Documents 폴더가 인덱싱됩니다. 의도한 것이 맞나요?")
             print("  특정 하위 폴더만 인덱싱하려면 config/config.yaml의 doc_root를 수정하세요.")
@@ -168,7 +175,7 @@ def run_full_index(config_path: Optional[str] = None):
             start_time = time.time()
             _files_since_unload = 0
 
-            for file_path in tqdm(target_files, desc="인덱싱"):
+            for file_path in tqdm(target_files, desc="인덱싱", disable=not sys.stderr.isatty()):
                 str_path = normalize_path(file_path)
 
                 # 이미 인덱싱된 파일 스킵
@@ -198,7 +205,9 @@ def run_full_index(config_path: Optional[str] = None):
                     fail_count += 1
 
                 _files_since_unload += 1
-                if _files_since_unload >= 200 and emb_manager.local_embedder.is_loaded:
+                if (should_unload_model(emb_manager.device)
+                        and _files_since_unload >= 200
+                        and emb_manager.local_embedder.is_loaded):
                     logger.info("주기적 모델 언로드 (MPS 단편화 방지)")
                     emb_manager.unload_model()
                     gc.collect()
@@ -310,7 +319,9 @@ def run_incremental_index(config_path: Optional[str] = None):
                     fail += 1
 
                 _files_since_unload += 1
-                if _files_since_unload >= 200 and emb_manager.local_embedder.is_loaded:
+                if (should_unload_model(emb_manager.device)
+                        and _files_since_unload >= 200
+                        and emb_manager.local_embedder.is_loaded):
                     logger.info("주기적 모델 언로드 (MPS 단편화 방지)")
                     emb_manager.unload_model()
                     gc.collect()
@@ -432,6 +443,7 @@ def show_stats(config_path: Optional[str] = None):
 
 def main():
     """메인 함수"""
+    setup_console_encoding()
     _setup_logger()
 
     parser = argparse.ArgumentParser(
