@@ -135,7 +135,8 @@ def index_single_file(
                 del batch_texts, batch_embeddings, batch_chroma
         finally:
             del valid_chunks
-            gc.collect()
+            if emb_manager.device != 'cpu':
+                gc.collect()
 
         if store_failed:
             tracker.record_error(str_path, "ChromaDB 저장 실패")

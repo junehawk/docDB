@@ -59,7 +59,9 @@ class LocalEmbedder:
             raise
 
     def _clear_device_cache(self):
-        """GPU/MPS 메모리 캐시 해제 (GC → sync → empty_cache 순서 중요)"""
+        """GPU/MPS 메모리 캐시 해제 (CPU에서는 스킵)"""
+        if self.device == 'cpu':
+            return
         import gc
         gc.collect()  # ① Python 참조 해제 → 텐서 참조 끊기
         try:

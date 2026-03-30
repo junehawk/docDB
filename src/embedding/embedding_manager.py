@@ -23,7 +23,8 @@ def _detect_device(device_config: str) -> str:
         return device_config
     try:
         import torch
-        if torch.backends.mps.is_available():
+        import sys
+        if sys.platform == 'darwin' and torch.backends.mps.is_available():
             return 'mps'
         elif torch.cuda.is_available():
             return 'cuda'
@@ -167,6 +168,11 @@ class EmbeddingManager:
         except Exception as e:
             logger.error(f"Failed to embed query: {e}")
             raise RuntimeError(f"Failed to embed query: {e}") from e
+
+    @property
+    def device(self) -> str:
+        """현재 임베딩 디바이스 반환"""
+        return self.local_embedder.device
 
     @property
     def is_loaded(self) -> bool:

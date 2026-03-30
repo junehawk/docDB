@@ -9,7 +9,7 @@ from loguru import logger
 class Reranker:
     """BAAI/bge-reranker-v2-m3 기반 Cross-Encoder 리랭커"""
 
-    def __init__(self, model_name: str = 'BAAI/bge-reranker-v2-m3', device: str = 'mps', batch_size: int = 16):
+    def __init__(self, model_name: str = 'BAAI/bge-reranker-v2-m3', device: str = 'auto', batch_size: int = 16):
         self.model_name = model_name
         self.device = device
         self.batch_size = batch_size
@@ -19,6 +19,9 @@ class Reranker:
         """Lazy loading: 첫 호출 시에만 모델 로드"""
         if self._model is None:
             from sentence_transformers import CrossEncoder
+            if self.device == 'auto':
+                from src.embedding.embedding_manager import _detect_device
+                self.device = _detect_device('auto')
             self._model = CrossEncoder(self.model_name, device=self.device)
             logger.info(f"Reranker 모델 로드 완료: {self.model_name} ({self.device})")
 
