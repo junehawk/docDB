@@ -134,6 +134,14 @@ class KoreanChunker:
         current_chunk = ""
 
         for sentence in sentences:
+            # 단일 문장이 chunk_size를 초과하면 강제 분할
+            if len(sentence) > self.chunk_size:
+                if current_chunk:
+                    chunks.append(current_chunk)
+                    current_chunk = ""
+                chunks.extend(self._force_split(sentence))
+                continue
+
             # 현재 청크에 문장을 추가했을 때 크기 초과 확인
             test_chunk = current_chunk + sentence if current_chunk else sentence
 
@@ -149,6 +157,28 @@ class KoreanChunker:
         if current_chunk:
             chunks.append(current_chunk)
 
+        return chunks
+
+    def _force_split(self, text: str) -> List[str]:
+        """
+        chunk_size를 초과하는 텍스트를 공백/단어 경계에서 강제 분할
+
+        Args:
+            text: 분할할 긴 텍스트
+
+        Returns:
+            chunk_size 이하의 청크 리스트
+        """
+        chunks = []
+        while len(text) > self.chunk_size:
+            # chunk_size 이내에서 마지막 공백 찾기
+            split_pos = text.rfind(' ', 0, self.chunk_size)
+            if split_pos <= 0:
+                split_pos = self.chunk_size
+            chunks.append(text[:split_pos].strip())
+            text = text[split_pos:].strip()
+        if text:
+            chunks.append(text)
         return chunks
 
     def _add_overlap(self, chunks: List[str]) -> List[str]:

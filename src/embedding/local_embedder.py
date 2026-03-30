@@ -139,12 +139,29 @@ class LocalEmbedder:
             logger.info(f"Embedding {len(texts)} texts in batches of {batch_size}")
             for i in range(0, len(texts), batch_size):
                 sub_texts = texts[i:i + batch_size]
-                sub_emb = self._model.encode(
-                    sub_texts,
-                    batch_size=batch_size,
-                    show_progress_bar=show_progress and i == 0,
-                    convert_to_numpy=True,
-                )
+                try:
+                    sub_emb = self._model.encode(
+                        sub_texts,
+                        batch_size=batch_size,
+                        show_progress_bar=show_progress and i == 0,
+                        convert_to_numpy=True,
+                    )
+                except Exception as batch_err:
+                    if 'buffer size' not in str(batch_err).lower():
+                        raise
+                    # MPS 메모리 에러: 캐시 정리 후 건별 재시도
+                    logger.warning(
+                        f"MPS 메모리 에러 (batch {i}~{i+len(sub_texts)}), "
+                        f"건별 재시도: {batch_err}"
+                    )
+                    self._clear_device_cache()
+                    sub_emb = np.empty((len(sub_texts), dim), dtype=np.float32)
+                    for j, txt in enumerate(sub_texts):
+                        sub_emb[j] = self._model.encode(
+                            txt, convert_to_numpy=True,
+                        )
+                        self._clear_device_cache()
+
                 result[i:i + len(sub_texts)] = sub_emb
                 del sub_emb
                 self._clear_device_cache()
