@@ -87,6 +87,7 @@ def generate_config(doc_root: str, device: str) -> str:
     # ~ 표기 가능하면 사용 (가독성)
     home = os.path.expanduser('~')
     display_root = doc_root.replace(home, '~') if doc_root.startswith(home) else doc_root
+    display_root = display_root.replace('\\', '/')  # YAML 내 경로는 항상 forward slash
 
     return f"""# docDB Configuration
 # ================================
@@ -226,6 +227,12 @@ def main():
   # 3. 이후 변경분만 증분 인덱싱
   python -m src.main --mode incremental_index
 """)
+
+    if sys.platform == 'win32':
+        print(f"\n  [팁] Windows Defender 실시간 보호가 인덱싱 속도를 크게 저하시킬 수 있습니다.")
+        print(f"  성능 향상을 위해 아래 폴더를 제외 목록에 추가하세요:")
+        print(f"    - {os.path.join(project_root, 'data')}")
+        print(f"    - 설정: Windows 보안 → 바이러스 및 위협 방지 → 설정 관리 → 제외")
 
 
 if __name__ == '__main__':

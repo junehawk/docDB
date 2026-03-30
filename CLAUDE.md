@@ -191,6 +191,18 @@ python -m src.main --mode stats
 - ChromaDB cosine distance (`hnsw:space: cosine`)
 - Config: YAML, `~` 경로 확장 지원
 
+## Windows Compatibility
+
+v0.9.2에서 Windows 호환성 개선 완료. 수정 시 아래 규칙 유지:
+
+1. **경로**: `src/compat.py`의 `normalize_path()`, `safe_realpath()`, `path_is_under()` 사용. 하드코딩 `/` 금지
+2. **subprocess**: `get_subprocess_kwargs()` 전개하여 `CREATE_NO_WINDOW` 자동 적용
+3. **MPS 전용 코드**: `should_unload_model(device)` 가드 필수. 무조건 `gc.collect()` 금지 (CPU 오버헤드)
+4. **외부 실행파일**: `find_executable(['libreoffice', 'soffice'])` 등 compat 함수 사용
+5. **인코딩**: `fix_encoding_name()` 으로 chardet 결과 보정. 콘솔 출력 전 `setup_console_encoding()`
+6. **asyncio**: MCP 서버 진입점에서 `setup_asyncio_policy()` 호출 (ProactorEventLoop 방지)
+7. **파일 I/O**: `PermissionError` catch 필수 (Windows 파일 잠금). BM25 캐시는 원자적 쓰기
+
 ## Migration Status
 
 kisti-vectordb → docDB 변환 완료 상태:
