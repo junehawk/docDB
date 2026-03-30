@@ -68,6 +68,9 @@ class TxtExtractor(BaseExtractor):
             if encoding is None:
                 encoding = "utf-8"
 
+            from src.compat import fix_encoding_name
+            encoding = fix_encoding_name(encoding)
+
             logger.debug(f"Detected encoding for {self.file_path.name}: {encoding}")
             return encoding
 

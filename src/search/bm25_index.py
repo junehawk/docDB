@@ -180,7 +180,7 @@ class BM25Index:
         return hashlib.sha256(joined.encode()).hexdigest()
 
     def _save_cache(self, count: int):
-        """BM25 인덱스를 로컬 캐시로 저장 (JSON 직렬화 사용)"""
+        """BM25 인덱스를 로컬 캐시로 저장 (원자적 쓰기 — 크래시 시 손상 방지)"""
         try:
             os.makedirs(os.path.dirname(self._cache_path), exist_ok=True)
             cache = {
@@ -189,8 +189,20 @@ class BM25Index:
                 'chunk_ids': self.chunk_ids,
                 'texts': self._texts,
             }
-            with open(self._cache_path, 'w', encoding='utf-8') as f:
-                json.dump(cache, f, ensure_ascii=False)
+            import tempfile
+            fd, tmp_path = tempfile.mkstemp(
+                dir=os.path.dirname(self._cache_path), suffix='.tmp'
+            )
+            try:
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    json.dump(cache, f, ensure_ascii=False)
+                os.replace(tmp_path, self._cache_path)
+            except BaseException:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
         except Exception as e:
             logger.warning(f"BM25 캐시 저장 실패: {e}")
 

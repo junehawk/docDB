@@ -102,7 +102,14 @@ class DocumentProcessor:
                 return []
 
             # 텍스트 추출
-            extraction_result = extractor.extract()
+            try:
+                extraction_result = extractor.extract()
+            except PermissionError:
+                logger.warning(
+                    f"파일이 다른 프로그램에 의해 잠김: {file_path.name} "
+                    "(Windows에서 파일을 닫고 재시도하세요)"
+                )
+                return []
 
             if not extraction_result.success:
                 logger.warning(
