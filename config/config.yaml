@@ -55,6 +55,8 @@ excluded_patterns:
   - '__pycache__'
   - '\.git'
   - '~\$'
+  - 'Thumbs\.db'
+  - 'desktop\.ini'
 
 # OCR 설정 (스캔 이미지 PDF용)
 ocr:

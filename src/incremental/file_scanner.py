@@ -48,6 +48,8 @@ class FileScanner:
                 r'.*__pycache__.*',  # Python cache
                 r'.*\.git.*',  # Git 파일
                 r'.*node_modules.*',  # Node modules
+                r'Thumbs\.db',  # Windows 썸네일 캐시
+                r'desktop\.ini',  # Windows 폴더 설정
             ]
 
             if excluded_patterns:
@@ -123,7 +125,7 @@ class FileScanner:
         try:
             files = {}
 
-            for root, dirs, filenames in os.walk(self.doc_root):
+            for root, dirs, filenames in os.walk(self.doc_root, followlinks=False):
                 # 제외된 디렉토리는 스킵
                 dirs[:] = [
                     d for d in dirs
@@ -136,8 +138,9 @@ class FileScanner:
                         continue
 
                     # 파일 확장자 확인
-                    ext = filename.split('.')[-1].lower()
-                    if ext not in self.SUPPORTED:
+                    from src.compat import get_file_extension
+                    ext = get_file_extension(filename)
+                    if not ext or ext not in self.SUPPORTED:
                         continue
 
                     file_path = unicodedata.normalize('NFC', os.path.join(root, filename))
